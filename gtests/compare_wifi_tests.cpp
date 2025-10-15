@@ -9,13 +9,6 @@
 #include <algorithm>
 #include <fstream>
 #include <string>
-#include <cstring>
-#include <cstdlib>
-#include <iomanip>
-#include <sstream>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <climits>
 
 extern "C" {
 #include "swclock.h"
@@ -25,6 +18,8 @@ extern "C" {
 #include "akf_servo.h"
 #include "ekf_servo.h"
 #include "aekf_servo.h"
+#include "pi_servo.h"
+#include "pi_servo.h"
 }
 
 using namespace std::chrono;
@@ -121,8 +116,8 @@ struct Channel {
 
 struct ServoRunner {
     SwClock* sw{};
-    void* kf{}; void* akf{}; void* ekf{}; void* aekf{};
-    enum Kind { KF, AKF, EKF, AEKF } kind;
+    void* kf{}; void* akf{}; void* ekf{}; void* aekf{}; void* pi{};
+    enum Kind { KF, AKF, EKF, AEKF, PI } kind;
 
     explicit ServoRunner(Kind k): kind(k) {
         sw = swclock_create();
@@ -130,18 +125,23 @@ struct ServoRunner {
         if (k==AKF) akf = akf_create();
         if (k==EKF) ekf = ekf_create();
         if (k==AEKF) aekf = aekf_create();
+        if (k==PI)   pi = pi_create();
+
         swclock_set_freq(sw, +25000.0);
         swclock_adjust(sw, (int64_t)25e6, (int64_t)8e8);
+
         if (kf)   kf_init((KalmanFilter*)kf, 1e-8, 2e-6);
         if (akf) akf_init((AdaptiveKalmanFilter*)akf, 1e-8, 2e-6);
         if (ekf) ekf_init((ExtendedKalmanFilter*)ekf, 1e-8, 2e-6);
         if (aekf) aekf_init((AdaptiveExtendedKalmanFilter*)aekf, 1e-8, 2e-6);
+        if (pi)  { pi_init_default_ptpd((PIServo*)pi); }
     }
     ~ServoRunner(){
         if (kf)   kf_destroy((KalmanFilter*)kf);
         if (akf) akf_destroy((AdaptiveKalmanFilter*)akf);
         if (ekf) ekf_destroy((ExtendedKalmanFilter*)ekf);
         if (aekf) aekf_destroy((AdaptiveExtendedKalmanFilter*)aekf);
+        if (pi)   pi_destroy((PIServo*)pi);
         swclock_destroy(sw);
     }
 
@@ -151,6 +151,7 @@ struct ServoRunner {
             case AKF:  return akf_get_drift_ppb((AdaptiveKalmanFilter*)akf);
             case EKF:  return ekf_get_drift_ppb((ExtendedKalmanFilter*)ekf);
             case AEKF: return aekf_get_drift_ppb((AdaptiveExtendedKalmanFilter*)aekf);
+            case PI:   return pi_get_drift_ppb((PIServo*)pi);
         }
         return 0.0;
     }
@@ -160,6 +161,7 @@ struct ServoRunner {
             case AKF:  return akf_get_offset((AdaptiveKalmanFilter*)akf);
             case EKF:  return ekf_get_offset((ExtendedKalmanFilter*)ekf);
             case AEKF: return aekf_get_offset((AdaptiveExtendedKalmanFilter*)aekf);
+            case PI:   return pi_get_offset((PIServo*)pi);
         }
         return 0.0;
     }
@@ -169,13 +171,14 @@ struct ServoRunner {
             case AKF:  (void)akf_update((AdaptiveKalmanFilter*)akf, z, dt); break;
             case EKF:  (void)ekf_update((ExtendedKalmanFilter*)ekf, z, dt); break;
             case AEKF: (void)aekf_update((AdaptiveExtendedKalmanFilter*)aekf, z, dt); break;
+            case PI:   (void)pi_update((PIServo*)pi, z, dt); break;
         }
         struct timex tf{}; tf.modes=ADJ_FREQUENCY; tf.freq=ppb_to_freq_fixed(drift_ppb()); sw_adjtimex(sw,&tf);
         struct timex to{}; to.modes=ADJ_OFFSET; to.offset=(long)std::llround(offset_s()*1e6); sw_adjtimex(sw,&to);
     }
 };
 
-static void run_condition(const WifiPreset& P, const std::string& output_dir){
+static void run_condition(const WifiPreset& P, const std::string& csv_prefix){
     int64_t master_start = now_ns();
     steady_clock::time_point wall0 = steady_clock::now();
     auto master_now = [&](){ int64_t el=duration_cast<nanoseconds>(steady_clock::now()-wall0).count(); return master_start+el; };
@@ -187,15 +190,16 @@ static void run_condition(const WifiPreset& P, const std::string& output_dir){
     ServoRunner a(ServoRunner::AKF);
     ServoRunner e(ServoRunner::EKF);
     ServoRunner ae(ServoRunner::AEKF);
+    ServoRunner pi(ServoRunner::PI);
 
     // Synchronize all SwClocks to master time initially  
     swclock_align_now(k.sw, master_start);
     swclock_align_now(a.sw, master_start);
     swclock_align_now(e.sw, master_start);
     swclock_align_now(ae.sw, master_start);
+    swclock_align_now(pi.sw, master_start);
 
-    std::string csv_path = output_dir + "/compare_wifi_" + P.name + ".csv";
-    std::ofstream csv(csv_path);
+    std::ofstream csv(csv_prefix + "_" + P.name + ".csv");
     csv << "t_s,servo,offset_s,drift_ppb,z_meas_s,had_meas\n";
 
     auto t0 = steady_clock::now();
@@ -217,6 +221,7 @@ static void run_condition(const WifiPreset& P, const std::string& output_dir){
             a.update(z_meas, dt);
             e.update(z_meas, dt);
             ae.update(z_meas, dt);
+            pi.update(z_meas, dt);
         }
 
         double t_s = std::chrono::duration<double>(nowtp - t0).count();
@@ -225,21 +230,21 @@ static void run_condition(const WifiPreset& P, const std::string& output_dir){
             csv << t_s << "," << name << "," << off_s << "," << S.drift_ppb() << ","
                 << (have?z_meas:0.0) << "," << (have?1:0) << "\n";
         };
-        log("KF", k); log("AKF", a); log("EKF", e); log("AEKF", ae);
+        log("KF", k); log("AKF", a); log("EKF", e); log("AEKF", ae); log("PI", pi);
 
         sleep_for_ms(tick_ms);
     }
     csv.close();
 }
 
-TEST(CompareWifi, PresetsCompareAllServos){
+TEST(CompareWifi, PresetsCompareAllServosWithPI){
     // Create timestamped output directory
     std::string output_dir = create_timestamped_output_dir();
     printf("[ COMPARE WIFI ] output directory: %s\n", output_dir.c_str());
     
     for (const auto& P : PRESETS){
         printf("[ COMPARE WIFI ] running condition: %s\n", P.name);
-        run_condition(P, output_dir);
+        run_condition(P, output_dir + "/compare_wifi");
         std::string csv_path = output_dir + "/compare_wifi_" + P.name + ".csv";
         printf("[ COMPARE WIFI ] wrote CSV: %s\n", csv_path.c_str());
     }

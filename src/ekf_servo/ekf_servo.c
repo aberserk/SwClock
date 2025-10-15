@@ -90,7 +90,7 @@ void ekf_init(ExtendedKalmanFilter* e,double q,double r){
     e->P[0][0]=1000.0; e->P[0][1]=0.0; e->P[1][0]=0.0; e->P[1][1]=100.0;
     e->Q[0][0]=q; e->Q[0][1]=0.0; e->Q[1][0]=0.0; e->Q[1][1]=q*0.1;
     e->R=r; e->dt=1.0; e->updateCount=0; e->initialized=0;
-    e->qstep_est_s=0.0; e->R_floor=fmax((0.0005*0.0005)/12.0, r*0.05); e->dt_ewma=0.01; e->miss_streak=0;
+    e->qstep_est_s=0.0; e->R_floor=fmax((0.0005*0.0005)/12.0, r*0.02); e->dt_ewma=0.01; e->miss_streak=0;
 }
 
 void ekf_reset(ExtendedKalmanFilter* e){
@@ -98,13 +98,13 @@ void ekf_reset(ExtendedKalmanFilter* e){
     ekf_init(e,Q00,R); e->Q[1][1]=Q11;
 }
 void ekf_set_noise(ExtendedKalmanFilter* e,double q0,double q1,double r){
-    if(!e) return; e->Q[0][0]=q0; e->Q[1][1]=q1; e->R=r; e->R_floor=fmax(e->R_floor, 0.05*r);
+    if(!e) return; e->Q[0][0]=q0; e->Q[1][1]=q1; e->R=r; e->R_floor=fmax(e->R_floor, 0.02*r);
 }
 void ekf_set_model(ExtendedKalmanFilter* e,
-                   void (*state_fn)(const double[2], double, double[2]),
-                   void (*meas_fn)(const double[2], double*),
-                   void (*jacobian_F)(const double[2], double, double[2][2]),
-                   void (*jacobian_H)(const double[2], double[2])){
+                   void (*state_fn)(const double x_in[2], double dt, double x_out[2]),
+                   void (*meas_fn)(const double x_in[2], double* z_out),
+                   void (*jacobian_F)(const double x_in[2], double dt, double F[2][2]),
+                   void (*jacobian_H)(const double x_in[2], double H[2])){
     if(!e) return;
     e->f = state_fn ? state_fn : default_f;
     e->h = meas_fn  ? meas_fn  : default_h;
@@ -120,7 +120,7 @@ static void update_quant_floor(struct ExtendedKalmanFilter* e, double z){
     if (e->qstep_est_s == 0.0) e->qstep_est_s = dz;
     else e->qstep_est_s = 0.98*e->qstep_est_s + 0.02*dz;
     double floor_from_quant = (e->qstep_est_s*e->qstep_est_s)/12.0;
-    e->R_floor = fmax(e->R_floor, fmax(floor_from_quant, 0.05*e->R));
+    e->R_floor = fmax(e->R_floor, fmax(floor_from_quant, 0.02*e->R));
 }
 
 double ekf_update(ExtendedKalmanFilter* e,double z_meas,double dt){
@@ -151,26 +151,15 @@ double ekf_update(ExtendedKalmanFilter* e,double z_meas,double dt){
 
     /* Use quantization-aware floor inside S (no API change) */
     double R_eff = fmax(e->R, e->R_floor);
-#ifdef DBG
-    e->dbg_R_eff = R_eff;
-#endif
     /* Tolerate bursts after gaps by inflating R_eff a bit while in miss_streak */
-    for (int i=0;i<e->miss_streak;i++) R_eff = fmin(R_eff*1.3, 30.0*e->R);
+    for (int i=0;i<e->miss_streak;i++) R_eff = fmin(R_eff*1.15, 30.0*e->R);
 
     e->S = e->P[0][0]*H[0]*H[0] + (e->P[0][1]+e->P[1][0])*H[0]*H[1] + e->P[1][1]*H[1]*H[1] + R_eff;
 
     /* Dynamic gating & asymmetric clamp like AKF */
-    double base_gate = (e->miss_streak>0)?4.5:3.5;
-    #ifdef DBG
-    e->dbg_sigma = sqrt(fabs(e->S));
-#endif
+    double base_gate = (e->miss_streak>0)?4.0:3.5;
     double sigma = sqrt(fabs(e->S)), gscale=1.0;
-    if (sigma>0){ double nsig=fabs(e->innovation)/sigma;
-#ifdef DBG
-        e->dbg_nsig = nsig; e->dbg_gate = base_gate;
-#endif
-        if(nsig>base_gate) gscale=fmax(0.2, base_gate/nsig); 
-    }
+    if (sigma>0){ double nsig=fabs(e->innovation)/sigma; if(nsig>base_gate) gscale=fmax(0.2, base_gate/nsig); }
 
     if (fabs(e->S) > 1e-18){
         double PHt[2] = { e->P[0][0]*H[0] + e->P[0][1]*H[1],
@@ -215,11 +204,10 @@ double        ekf_get_gain_offset(const ExtendedKalmanFilter* e){ return e?e->K[
 double        ekf_get_gain_drift (const ExtendedKalmanFilter* e){ return e?e->K[1]:0.0; }
 unsigned long ekf_get_update_count(const ExtendedKalmanFilter* e){ return e?e->updateCount:0UL; }
 int           ekf_is_initialized (const ExtendedKalmanFilter* e){ return e?e->initialized:0; }
-
 #ifdef DBG
-double ekf_dbg_R_eff(const ExtendedKalmanFilter* e){ return e?e->dbg_R_eff:0.0; }
+double ekf_dbg_R_eff(const ExtendedKalmanFilter* e){ return e?e->R>e->R_floor?e->R:e->R_floor:0.0; }
 double ekf_dbg_R_floor(const ExtendedKalmanFilter* e){ return e?e->R_floor:0.0; }
-double ekf_dbg_gate(const ExtendedKalmanFilter* e){ return e?e->dbg_gate:0.0; }
-double ekf_dbg_sigma(const ExtendedKalmanFilter* e){ return e?e->dbg_sigma:0.0; }
-double ekf_dbg_nsig(const ExtendedKalmanFilter* e){ return e?e->dbg_nsig:0.0; }
+double ekf_dbg_gate(const ExtendedKalmanFilter* e){ (void)e; return 0.0; }
+double ekf_dbg_sigma(const ExtendedKalmanFilter* e){ return e?sqrt(fabs(e->S)):0.0; }
+double ekf_dbg_nsig(const ExtendedKalmanFilter* e){ return e?(sqrt(fabs(e->S))>0?fabs(e->innovation)/sqrt(fabs(e->S)):0.0):0.0; }
 #endif

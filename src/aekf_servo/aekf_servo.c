@@ -87,7 +87,7 @@ void aekf_init(AdaptiveExtendedKalmanFilter* e,double q,double r){
     e->R=r; e->R_adapt=r; e->e_var_fast=r; e->e_var_slow=r;
     e->dt=1.0; e->updateCount=0; e->initialized=0;
     e->e_mean_fast=0.0; e->e_mean_slow=0.0; e->e_prev=0.0; e->corr_lag1=0.0; e->prevDrift=0.0;
-    e->z_prev=0.0; e->qstep_est_s=0.0; e->R_floor=fmax((0.0005*0.0005)/12.0, r*0.05);
+    e->z_prev=0.0; e->qstep_est_s=0.0; e->R_floor=fmax((0.0005*0.0005)/12.0, r*0.02);
     e->dt_ewma=0.01; e->miss_streak=0; e->k1_satur_count=0;
 }
 
@@ -99,7 +99,7 @@ void aekf_set_noise(AdaptiveExtendedKalmanFilter* e,double q0,double q1,double r
     if(!e) return; e->Q[0][0]=q0; e->Q[1][1]=q1; e->R=r;
     if(e->R_adapt<0.01*e->R) e->R_adapt=0.01*e->R;
     if(e->R_adapt>30.0*e->R) e->R_adapt=30.0*e->R;
-    e->R_floor = fmax(e->R_floor, 0.05*e->R);
+    e->R_floor = fmax(e->R_floor, 0.02*e->R);
 }
 void aekf_set_adaptation(AdaptiveExtendedKalmanFilter* e,double baseQ,double alpha,double beta){
     if(!e) return; e->baseQ=baseQ; e->alpha=alpha; e->beta=beta;
@@ -124,7 +124,7 @@ static void update_quant_floor(struct AdaptiveExtendedKalmanFilter* e, double z)
     if (e->qstep_est_s == 0.0) e->qstep_est_s = dz;
     else e->qstep_est_s = 0.98*e->qstep_est_s + 0.02*dz;
     double floor_from_quant = (e->qstep_est_s*e->qstep_est_s)/12.0;
-    e->R_floor = fmax(e->R_floor, fmax(floor_from_quant, 0.05*e->R));
+    e->R_floor = fmax(e->R_floor, fmax(floor_from_quant, 0.02*e->R));
 }
 
 static void adapt_R(struct AdaptiveExtendedKalmanFilter* e){
@@ -238,10 +238,9 @@ int           aekf_is_initialized (const AdaptiveExtendedKalmanFilter* e){ retur
 double aekf_get_R_adapt(const AdaptiveExtendedKalmanFilter* e){ return e?e->R_adapt:0.0; }
 double aekf_get_Q_offset(const AdaptiveExtendedKalmanFilter* e){ return e?e->Q[0][0]:0.0; }
 double aekf_get_Q_drift (const AdaptiveExtendedKalmanFilter* e){ return e?e->Q[1][1]:0.0; }
-
 #ifdef DBG
 double aekf_dbg_R_floor(const AdaptiveExtendedKalmanFilter* e){ return e?e->R_floor:0.0; }
-double aekf_dbg_gate(const AdaptiveExtendedKalmanFilter* e){ return e?e->dbg_gate:0.0; }
-double aekf_dbg_sigma(const AdaptiveExtendedKalmanFilter* e){ return e?e->dbg_sigma:0.0; }
-double aekf_dbg_nsig(const AdaptiveExtendedKalmanFilter* e){ return e?e->dbg_nsig:0.0; }
+double aekf_dbg_gate(const AdaptiveExtendedKalmanFilter* e){ (void)e; return 0.0; }
+double aekf_dbg_sigma(const AdaptiveExtendedKalmanFilter* e){ return e?sqrt(fabs(e->S)):0.0; }
+double aekf_dbg_nsig(const AdaptiveExtendedKalmanFilter* e){ return e?(sqrt(fabs(e->S))>0?fabs(e->innovation)/sqrt(fabs(e->S)):0.0):0.0; }
 #endif
