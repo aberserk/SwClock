@@ -68,6 +68,12 @@ file(GLOB PI_SERVO_SOURCES "src/pi_servo/*.c")
 file(GLOB PI_SERVO_HEADERS "src/pi_servo/*.h")
 add_library(pi_servo STATIC ${PI_SERVO_SOURCES} ${PI_SERVO_HEADERS})
 
+# Create the Mix Servo library
+file(GLOB MIX_SERVO_SOURCES "src/mix_servo/src/servo/*.c")
+file(GLOB MIX_SERVO_HEADERS "src/mix_servo/src/servo/*.h")
+add_library(mix_servo STATIC ${MIX_SERVO_SOURCES} ${MIX_SERVO_HEADERS})
+target_include_directories(mix_servo PRIVATE src/akf_servo src/pi_servo)
+
 # Include directories
 target_include_directories(swclock PUBLIC src/sw_clock)
 target_include_directories(kf_servo PUBLIC src/kf_servo)
@@ -75,6 +81,7 @@ target_include_directories(akf_servo PUBLIC src/akf_servo)
 target_include_directories(aekf_servo PUBLIC src/aekf_servo)
 target_include_directories(ekf_servo PUBLIC src/ekf_servo)
 target_include_directories(pi_servo PUBLIC src/pi_servo)
+target_include_directories(mix_servo PUBLIC src/mix_servo/src/servo)
 
 # Link with required libraries
 find_library(MATH_LIBRARY m)
@@ -85,6 +92,7 @@ if(MATH_LIBRARY)
     target_link_libraries(aekf_servo ${MATH_LIBRARY})
     target_link_libraries(ekf_servo ${MATH_LIBRARY})
     target_link_libraries(pi_servo ${MATH_LIBRARY})
+    target_link_libraries(mix_servo ${MATH_LIBRARY})
 endif()
 
 # Platform-specific libraries
@@ -122,7 +130,7 @@ if(GTest_FOUND AND GTEST_SOURCES)
     # Create gtests executable using modern CMake GTest targets
     add_executable(swclock_gtests ${GTEST_SOURCES})
     # Only link gtest_main which automatically includes gtest
-    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo akf_servo aekf_servo ekf_servo pi_servo GTest::gtest_main)
+    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo akf_servo aekf_servo ekf_servo pi_servo mix_servo GTest::gtest_main)
     target_include_directories(swclock_gtests PRIVATE src/sw_clock src/kf_servo src/akf_servo)
     
     # Ensure logs directory exists for test output in project root
