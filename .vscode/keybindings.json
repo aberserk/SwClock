@@ -1,0 +1,27 @@
+[
+    {
+        "key": "f7",
+        "command": "cmake.build"
+    },
+    {
+        "key": "ctrl+f7",
+        "command": "cmake.buildTarget"
+    },
+    {
+        "key": "shift+f7", 
+        "command": "cmake.clean"
+    },
+    {
+        "key": "f5",
+        "command": "cmake.debugTarget",
+        "when": "!inDebugMode"
+    },
+    {
+        "key": "ctrl+f5",
+        "command": "cmake.launchTarget"
+    },
+    {
+        "key": "shift+f5",
+        "command": "cmake.selectLaunchTarget"
+    }
+]

@@ -1,0 +1,63 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Debug build with symbols and no optimization",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/debug-macos",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release", 
+            "description": "Optimized release build",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/release-macos",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "gtests",
+            "displayName": "GTests",
+            "description": "Debug build with GoogleTest support",
+            "generator": "Ninja", 
+            "binaryDir": "${sourceDir}/build/gtests-macos",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "displayName": "Build Debug"
+        },
+        {
+            "name": "release", 
+            "configurePreset": "release",
+            "displayName": "Build Release"
+        },
+        {
+            "name": "gtests",
+            "configurePreset": "gtests", 
+            "displayName": "Build GTests",
+            "targets": ["swclock_gtests"]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "gtests",
+            "configurePreset": "gtests",
+            "displayName": "Run GTests"
+        }
+    ]
+}
