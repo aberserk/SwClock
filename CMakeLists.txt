@@ -48,15 +48,22 @@ add_library(swclock STATIC ${SWCLOCK_SOURCES} ${SWCLOCK_HEADERS})
 # Create the KF Servo library  
 add_library(kf_servo STATIC ${KF_SERVO_SOURCES} ${KF_SERVO_HEADERS})
 
+# Create the AKF Servo library
+file(GLOB AKF_SERVO_SOURCES "src/akf_servo/*.c")
+file(GLOB AKF_SERVO_HEADERS "src/akf_servo/*.h")
+add_library(akf_servo STATIC ${AKF_SERVO_SOURCES} ${AKF_SERVO_HEADERS})
+
 # Include directories
 target_include_directories(swclock PUBLIC src/sw_clock)
 target_include_directories(kf_servo PUBLIC src/kf_servo)
+target_include_directories(akf_servo PUBLIC src/akf_servo)
 
 # Link with required libraries
 find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)
     target_link_libraries(swclock ${MATH_LIBRARY})
     target_link_libraries(kf_servo ${MATH_LIBRARY})
+    target_link_libraries(akf_servo ${MATH_LIBRARY})
 endif()
 
 # Platform-specific libraries
@@ -65,9 +72,11 @@ if(APPLE)
 elseif(UNIX)
     target_link_libraries(swclock pthread rt)
     target_link_libraries(kf_servo pthread)
+    target_link_libraries(akf_servo pthread)
 else()
     target_link_libraries(swclock pthread)
     target_link_libraries(kf_servo pthread)
+    target_link_libraries(akf_servo pthread)
 endif()
 
 # Enable testing and find GTest
@@ -88,13 +97,13 @@ if(GTest_FOUND AND GTEST_SOURCES)
     # Create gtests executable using modern CMake GTest targets
     add_executable(swclock_gtests ${GTEST_SOURCES})
     # Only link gtest_main which automatically includes gtest
-    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo GTest::gtest_main)
-    target_include_directories(swclock_gtests PRIVATE src/sw_clock src/kf_servo)
+    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo akf_servo GTest::gtest_main)
+    target_include_directories(swclock_gtests PRIVATE src/sw_clock src/kf_servo src/akf_servo)
     
-    # Ensure logs directory exists for test output
+    # Ensure logs directory exists for test output in project root
     add_custom_command(TARGET swclock_gtests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/logs
-        COMMENT "Creating logs directory for test output"
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/logs
+        COMMENT "Creating logs directory for test output in project root"
     )
     
     # Add the test to CTest
@@ -137,13 +146,13 @@ else()
 endif()
 
 # Installation rules
-install(TARGETS swclock kf_servo
+install(TARGETS swclock kf_servo akf_servo
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
 
-install(FILES ${SWCLOCK_HEADERS} ${KF_SERVO_HEADERS}
+install(FILES ${SWCLOCK_HEADERS} ${KF_SERVO_HEADERS} ${AKF_SERVO_HEADERS}
     DESTINATION include
 )
 

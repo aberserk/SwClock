@@ -9,7 +9,9 @@ if [ -z "$BUILD_DIR" ] || [ -z "$TOOLS_DIR" ]; then
     exit 1
 fi
 
-LOGS_DIR="$BUILD_DIR/logs"
+# Look for logs in the project source directory (parent of tools directory)
+PROJECT_DIR=$(dirname "$TOOLS_DIR")
+LOGS_DIR="$PROJECT_DIR/logs"
 
 if [ ! -d "$LOGS_DIR" ]; then
     echo "No logs directory found at $LOGS_DIR"

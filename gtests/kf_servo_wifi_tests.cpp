@@ -32,7 +32,7 @@ static inline double measure_offset_s(struct SwClock* sw, int64_t master_ns) {
     return (double)((long double)(master_ns - sw_ns) / 1e9L);
 }
 
-static std::string create_timestamped_output_dir(const std::string& base_dir = "logs") {
+static std::string create_timestamped_output_dir(const std::string& base_dir = "../../logs") {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
     auto tm = *std::localtime(&time_t);
@@ -290,8 +290,13 @@ TEST(KalmanServo_Wifi, WifiStatsAndPlotsReady) {
     if (!output_dir.empty()) {
         printf("[ WIFI PERF ] output directory: %s\n", output_dir.c_str());
         
-        // Automatically generate plots
-        std::string plot_cmd = "python3 ../../tools/plot_kf_wifi_perf.py " + out_csv;
+        // Automatically generate plots (run from project root)
+        // Convert relative path to absolute path for Python script
+        std::string csv_path = out_csv;
+        if (csv_path.substr(0, 6) == "../../") {
+            csv_path = csv_path.substr(6); // Remove "../../" prefix
+        }
+        std::string plot_cmd = "cd ../.. && python3 tools/plot_kf_wifi_perf.py " + csv_path;
         printf("[ WIFI PERF ] generating plots...\n");
         int result = system(plot_cmd.c_str());
         if (result == 0) {
