@@ -53,10 +53,22 @@ file(GLOB AKF_SERVO_SOURCES "src/akf_servo/*.c")
 file(GLOB AKF_SERVO_HEADERS "src/akf_servo/*.h")
 add_library(akf_servo STATIC ${AKF_SERVO_SOURCES} ${AKF_SERVO_HEADERS})
 
+# Create the AEKF Servo library
+file(GLOB AEKF_SERVO_SOURCES "src/aekf_servo/*.c")
+file(GLOB AEKF_SERVO_HEADERS "src/aekf_servo/*.h")
+add_library(aekf_servo STATIC ${AEKF_SERVO_SOURCES} ${AEKF_SERVO_HEADERS})
+
+# Create the EKF Servo library
+file(GLOB EKF_SERVO_SOURCES "src/ekf_servo/*.c")
+file(GLOB EKF_SERVO_HEADERS "src/ekf_servo/*.h")
+add_library(ekf_servo STATIC ${EKF_SERVO_SOURCES} ${EKF_SERVO_HEADERS})
+
 # Include directories
 target_include_directories(swclock PUBLIC src/sw_clock)
 target_include_directories(kf_servo PUBLIC src/kf_servo)
 target_include_directories(akf_servo PUBLIC src/akf_servo)
+target_include_directories(aekf_servo PUBLIC src/aekf_servo)
+target_include_directories(ekf_servo PUBLIC src/ekf_servo)
 
 # Link with required libraries
 find_library(MATH_LIBRARY m)
@@ -64,6 +76,8 @@ if(MATH_LIBRARY)
     target_link_libraries(swclock ${MATH_LIBRARY})
     target_link_libraries(kf_servo ${MATH_LIBRARY})
     target_link_libraries(akf_servo ${MATH_LIBRARY})
+    target_link_libraries(aekf_servo ${MATH_LIBRARY})
+    target_link_libraries(ekf_servo ${MATH_LIBRARY})
 endif()
 
 # Platform-specific libraries
@@ -73,10 +87,14 @@ elseif(UNIX)
     target_link_libraries(swclock pthread rt)
     target_link_libraries(kf_servo pthread)
     target_link_libraries(akf_servo pthread)
+    target_link_libraries(aekf_servo pthread)
+    target_link_libraries(ekf_servo pthread)
 else()
     target_link_libraries(swclock pthread)
     target_link_libraries(kf_servo pthread)
     target_link_libraries(akf_servo pthread)
+    target_link_libraries(aekf_servo pthread)
+    target_link_libraries(ekf_servo pthread)
 endif()
 
 # Enable testing and find GTest
@@ -97,7 +115,7 @@ if(GTest_FOUND AND GTEST_SOURCES)
     # Create gtests executable using modern CMake GTest targets
     add_executable(swclock_gtests ${GTEST_SOURCES})
     # Only link gtest_main which automatically includes gtest
-    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo akf_servo GTest::gtest_main)
+    target_link_libraries(swclock_gtests PRIVATE swclock kf_servo akf_servo aekf_servo ekf_servo GTest::gtest_main)
     target_include_directories(swclock_gtests PRIVATE src/sw_clock src/kf_servo src/akf_servo)
     
     # Ensure logs directory exists for test output in project root
@@ -131,6 +149,18 @@ if(Python3_FOUND)
         DESTINATION bin
         RENAME plot_kf_wifi_perf
     )
+    install(PROGRAMS tools/plot_akf_wifi_perf.py
+        DESTINATION bin
+        RENAME plot_akf_wifi_perf
+    )
+    install(PROGRAMS tools/plot_aekf_wifi_perf.py
+        DESTINATION bin
+        RENAME plot_aekf_wifi_perf
+    )
+    install(PROGRAMS tools/plot_ekf_wifi_perf.py
+        DESTINATION bin
+        RENAME plot_ekf_wifi_perf
+    )
     
     # Add convenience targets for running Python tools
     add_custom_target(plot_perf
@@ -146,13 +176,13 @@ else()
 endif()
 
 # Installation rules
-install(TARGETS swclock kf_servo akf_servo
+install(TARGETS swclock kf_servo akf_servo aekf_servo ekf_servo
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
 
-install(FILES ${SWCLOCK_HEADERS} ${KF_SERVO_HEADERS} ${AKF_SERVO_HEADERS}
+install(FILES ${SWCLOCK_HEADERS} ${KF_SERVO_HEADERS} ${AKF_SERVO_HEADERS} ${AEKF_SERVO_HEADERS} ${EKF_SERVO_HEADERS}
     DESTINATION include
 )
 
