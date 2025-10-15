@@ -179,8 +179,7 @@ struct ServoRunner {
             case PI:   (void)pi_update((PIServo*)pi, z, dt); break;
             case MIX:  (void)mix_update((MixServo*)mix, z, dt); break;
         }
-        struct timex tf{}; tf.modes=ADJ_FREQUENCY; tf.freq=ppb_to_freq_fixed(drift_ppb()); sw_adjtimex(sw,&tf);
-        struct timex to{}; to.modes=ADJ_OFFSET; to.offset=(long)std::llround(offset_s()*1e6); sw_adjtimex(sw,&to);
+        struct timex to{}; to.modes=ADJ_OFFSET; to.offset=(long)std::llround(offset_s()*1e6); sw_adjtimex(sw,&to); struct timex tf{}; tf.modes=ADJ_FREQUENCY; tf.freq=(long)std::llround(drift_ppb()/1000.0*65536.0); sw_adjtimex(sw,&tf); 
     }
 };
 

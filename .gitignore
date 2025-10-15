@@ -1,5 +1,6 @@
 build/
 logs/
+venv/
 *.o
 *.log
 *.tmp

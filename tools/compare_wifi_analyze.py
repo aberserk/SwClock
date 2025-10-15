@@ -1,5 +1,65 @@
 
 #!/usr/bin/env python3
+import sys
+import subprocess
+from pathlib import Path
+import os
+
+def ensure_dependencies():
+    """Check and install required packages, creating venv if needed"""
+    req_file = Path(__file__).parent / 'requirements.txt'
+    venv_path = Path(__file__).parent.parent / 'venv'
+    
+    # Check if packages are available
+    try:
+        import numpy
+        import pandas  
+        import matplotlib
+        print("✓ All dependencies available")
+        return
+    except ImportError:
+        pass
+    
+    print("Missing dependencies, setting up environment...")
+    
+    # Create virtual environment if it doesn't exist
+    if not venv_path.exists():
+        print(f"Creating virtual environment at {venv_path}...")
+        try:
+            subprocess.check_call([sys.executable, '-m', 'venv', str(venv_path)])
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to create virtual environment: {e}")
+            sys.exit(1)
+    
+    # Get the venv python executable
+    if os.name == 'nt':  # Windows
+        venv_python = venv_path / 'Scripts' / 'python.exe'
+        venv_pip = venv_path / 'Scripts' / 'pip.exe'
+    else:  # Unix/macOS
+        venv_python = venv_path / 'bin' / 'python'
+        venv_pip = venv_path / 'bin' / 'pip'
+    
+    # If we're not already using the venv python, restart with it
+    if sys.executable != str(venv_python) and venv_python.exists():
+        print(f"Switching to virtual environment python...")
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+    
+    # Install requirements in the virtual environment
+    if req_file.exists() and venv_pip.exists():
+        print("Installing dependencies in virtual environment...")
+        try:
+            subprocess.check_call([str(venv_pip), 'install', '-r', str(req_file)])
+            print("✓ Dependencies installed successfully")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to install dependencies: {e}")
+            sys.exit(1)
+    else:
+        print("❌ requirements.txt not found or pip not available")
+        sys.exit(1)
+
+# Ensure dependencies before importing
+ensure_dependencies()
+
 import argparse
 import glob
 import os

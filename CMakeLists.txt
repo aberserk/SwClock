@@ -150,6 +150,14 @@ else()
     message(STATUS "No gtest source files found in gtests/ directory")
 endif()
 
+# Add sweep comparison executable
+add_executable(sweep_compare_wifi src/sweep_compare_wifi.cpp)
+target_link_libraries(sweep_compare_wifi PRIVATE swclock kf_servo akf_servo aekf_servo ekf_servo pi_servo mix_servo)
+target_include_directories(sweep_compare_wifi PRIVATE src/sw_clock src/kf_servo src/akf_servo src/aekf_servo src/ekf_servo src/pi_servo src/mix_servo/src/servo)
+set_target_properties(sweep_compare_wifi PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+find_package(Threads REQUIRED)
+target_link_libraries(sweep_compare_wifi PRIVATE Threads::Threads)
+
 # Python tools integration
 find_package(Python3 COMPONENTS Interpreter QUIET)
 

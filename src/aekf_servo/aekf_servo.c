@@ -196,7 +196,7 @@ double aekf_update(AdaptiveExtendedKalmanFilter* e,double z_meas,double dt){
     e->S = e->P[0][0]*H[0]*H[0] + (e->P[0][1]+e->P[1][0])*H[0]*H[1] + e->P[1][1]*H[1]*H[1] + e->R_adapt;
 
     /* gating */
-    double base_gate = (e->miss_streak>0)?4.0:3.5;
+    double base_gate = (e->miss_streak>0)? 4.0 : 3.5;
     double sigma=sqrt(fabs(e->S)), gscale=1.0;
     if(sigma>0){ double nsig=fabs(e->innovation)/sigma; if(nsig>base_gate) gscale=clampd(base_gate/nsig, 0.2, 1.0); }
 
