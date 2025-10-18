@@ -130,6 +130,10 @@ static inline int64_t diff_ns(const struct timespec* a, const struct timespec* b
     return ts_to_ns(b) - ts_to_ns(a);
 }
 
+void print_timespec_as_datetime(const struct timespec *ts);
+void print_timespec_as_localtime(const struct timespec *ts);
+void print_timespec_as_TAI(const struct timespec *ts);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -27,6 +27,26 @@ TEST(SwClockV1, CreateDestroy) {
     swclock_destroy(c);
 }
 
+TEST(SwClockV1, PrintTime) {
+    SwClock* c = swclock_create();
+    ASSERT_NE(c, nullptr);
+
+    struct timespec ts;
+    swclock_gettime(c, CLOCK_REALTIME, &ts);
+    printf("\nSwClock CURRENT TIME:\n\n");
+    printf(" UTC Time    : ");
+    print_timespec_as_datetime(&ts);
+
+    printf(" TAI Time    : ");
+    print_timespec_as_TAI(&ts);
+
+    printf(" Local Time  : ");
+    print_timespec_as_localtime(&ts);
+    printf("\n");
+
+    swclock_destroy(c);
+}
+
 TEST(SwClockV1, OffsetImmediateStep) {
     SwClock* c = swclock_create();
     ASSERT_NE(c, nullptr);
