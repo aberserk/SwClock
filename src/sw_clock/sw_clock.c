@@ -32,10 +32,6 @@
 // -------- helpers -------------------------------------------
 
 
-static inline int64_t ts_to_ns(const struct timespec* t) {
-    return (int64_t)t->tv_sec * NS_PER_SEC + (int64_t)t->tv_nsec;
-}
-
 static inline struct timespec ns_to_ts(int64_t ns) {
     int64_t sec  = ns / NS_PER_SEC;   // truncates toward zero
     int64_t nsec = ns % NS_PER_SEC;   // same sign as ns
