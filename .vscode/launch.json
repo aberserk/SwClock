@@ -1,65 +1,48 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Debug SwClock GTests",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/gtests-macos/swclock_gtests",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb",
-            "preLaunchTask": "Build GTests",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for lldb",
-                    "text": "settings set target.disable-aslr false",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "Debug SwClock GTests (with filter)",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/build/gtests-macos/swclock_gtests",
-            "args": ["--gtest_filter=${input:testFilter}"],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb",
-            "preLaunchTask": "Build GTests",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for lldb",
-                    "text": "settings set target.disable-aslr false",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "CMake Debug Current Target",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb"
-        }
-    ],
-    "inputs": [
-        {
-            "id": "testFilter",
-            "description": "GTest filter pattern",
-            "default": "*",
-            "type": "promptString"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug SwClock GTests",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${command:cmake.buildDirectory}/swclock_gtests",
+      "args": [],
+      "cwd": "${command:cmake.buildDirectory}",
+      "terminal": "integrated",
+      "preLaunchTask": "Build GTests",
+      "initCommands": [
+        "settings set target.disable-aslr false"
+      ]
+    },
+    {
+      "name": "Debug SwClock GTests (with filter)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${command:cmake.buildDirectory}/swclock_gtests",
+      "args": ["--gtest_filter=${input:testFilter}"],
+      "cwd": "${command:cmake.buildDirectory}",
+      "terminal": "integrated",
+      "preLaunchTask": "Build GTests",
+      "initCommands": [
+        "settings set target.disable-aslr false"
+      ]
+    },
+    {
+      "name": "CMake Debug Current Target",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testFilter",
+      "description": "GTest filter pattern",
+      "default": "*",
+      "type": "promptString"
+    }
+  ]
 }

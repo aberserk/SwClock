@@ -113,7 +113,7 @@ else()
 endif()
 
 # Enable testing and find GTest
-enable_testing()
+include(CTest)
 enable_testing()
 
 # Set the path for Homebrew on Apple Silicon and Intel Macs

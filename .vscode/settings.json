@@ -1,43 +1,22 @@
 {
-    "cmake.configureOnOpen": true,
-    "cmake.generator": "Ninja",
-    "cmake.buildDirectory": "${workspaceFolder}/build/${buildType}-macos",
-    "cmake.buildTask": true,
-    "cmake.debugConfig": {
-        "MIMode": "lldb"
-    },
-    "cmake.defaultVariants": {
-        "buildType": {
-            "default": "debug",
-            "description": "The build type",
-            "choices": {
-                "debug": {
-                    "short": "Debug",
-                    "long": "Emit debug information without optimization",
-                    "buildType": "Debug"
-                },
-                "release": {
-                    "short": "Release", 
-                    "long": "Enable optimizations, omit debug info",
-                    "buildType": "Release"
-                },
-                "gtests": {
-                    "short": "GTests",
-                    "long": "Debug build with GoogleTest support",
-                    "buildType": "Debug"
-                }
-            }
-        }
-    },
-    "cmake.useCMakePresets": "always",
-    "cmake.showSystemKits": false,
-    "cmake.automaticReconfigure": true,
-    "cmake.buildBeforeRun": true,
-    "cmake.clearOutputBeforeBuild": true,
-    "files.associations": {
-        "*.h": "c",
-        "*.c": "c"
-    },
-    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
-    "C_Cpp.default.intelliSenseMode": "macos-clang-x64"
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": true,
+
+  // Pick your defaults so the status bar buttons “just work”
+  "cmake.defaultConfigurePreset": "debug-macos",
+  "cmake.defaultBuildPreset": "build-debug",
+  "cmake.testPreset": "gtests",
+
+  // Quality-of-life
+  "cmake.automaticReconfigure": true,
+  "cmake.buildBeforeRun": true,
+  "cmake.clearOutputBeforeBuild": true,
+
+  // Tooling
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "C_Cpp.default.intelliSenseMode": "macos-clang-x64",   // change to macos-clang-arm64 if on Apple Silicon
+  "files.associations": {
+    "*.h": "c",
+    "*.c": "c"
+  }
 }
