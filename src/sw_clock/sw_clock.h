@@ -15,6 +15,8 @@ extern "C" {
 
 #include <time.h>
 #include <sys/time.h> // timeval
+#include "sw_clock_constants.h"
+#include "sw_clock_utilities.h"
 
 // -------- timex compatibility (for macOS) -------------------
 // Prevent system timex.h from being included to avoid conflicts
@@ -95,44 +97,6 @@ int      swclock_gettime(SwClock* c, clockid_t clk_id, struct timespec *tp);
 int      swclock_settime(SwClock* c, clockid_t clk_id, const struct timespec *tp);
 // Functionally similar to Linux ntp_adjtime (subset): ADJ_FREQUENCY, ADJ_OFFSET, ADJ_SETOFFSET, ADJ_STATUS
 int      swclock_adjtime(SwClock* c, struct timex *tptr);
-
-
-// Constants used by the ntp_adjtime() frequency field
-#define NTP_SCALE_SHIFT   16                // Frequency units are (ppm << 16)
-#define NTP_SCALE_FACTOR  (1L << NTP_SCALE_SHIFT)  // 65536
-
-// Units
-#define PPM_TO_PPB   1000LL       // parts-per-million to parts-per-billion  
-#define NS_PER_SEC   1000000000LL
-#define US_PER_SEC   1000000LL
-#define MS_PER_SEC   1000LL
-
-#define NS_PER_US    1000LL
-#define NS_PER_MS    1000000LL
-#define SEC_PER_NS   (1.0 / (double)NS_PER_SEC)
-
-// swclock_adjtime() frequency conversion helpers
-static inline long ppm_to_ntp_freq(double ppm)
-{
-    return (long)(ppm * (double)NTP_SCALE_FACTOR);
-}
-
-static inline double ntp_freq_to_ppm(long ntp_freq)
-{
-    return (double)ntp_freq / (double)NTP_SCALE_FACTOR;
-}
-
-static inline int64_t ts_to_ns(const struct timespec* t) {
-    return (int64_t)t->tv_sec * NS_PER_SEC + (int64_t)t->tv_nsec;
-}
-
-static inline int64_t diff_ns(const struct timespec* a, const struct timespec* b) {
-    return ts_to_ns(b) - ts_to_ns(a);
-}
-
-void print_timespec_as_datetime(const struct timespec *ts);
-void print_timespec_as_localtime(const struct timespec *ts);
-void print_timespec_as_TAI(const struct timespec *ts);
 
 #ifdef __cplusplus
 } // extern "C"

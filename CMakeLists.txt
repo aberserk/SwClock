@@ -24,6 +24,7 @@ endif()
 # Source files
 set(SWCLOCK_SOURCES
     src/sw_clock/sw_clock.c
+    src/sw_clock/sw_clock_utilities.c
 )
 
 set(SWCLOCK_HEADERS
