@@ -4,7 +4,7 @@
     {
       "name": "config-base-macos",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
+      "binaryDir": "${sourceDir}/build/ninja-gtests-macos",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       },
@@ -12,24 +12,6 @@
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "config-debug-macos",
-      "inherits": "config-base-macos",
-      "displayName": "Configure macOS Debug",
-      "binaryDir": "${sourceDir}/build/ninja-debug-macos",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "config-release-macos",
-      "inherits": "config-base-macos",
-      "displayName": "Configure macOS Release",
-      "binaryDir": "${sourceDir}/build/ninja-release-macos",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
@@ -45,18 +27,6 @@
     }
   ],
   "buildPresets": [
-    {
-      "name": "build-debug",
-      "displayName": "Build macOS Debug",
-      "configurePreset": "config-debug-macos",
-      "jobs": 8
-    },
-    {
-      "name": "build-release",
-      "displayName": "Build macOS Release",
-      "configurePreset": "config-release-macos",
-      "jobs": 8
-    },
     {
       "name": "build-gtests",
       "displayName": "Build macOS GTests",

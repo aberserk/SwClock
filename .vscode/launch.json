@@ -26,15 +26,6 @@
       "initCommands": [
         "settings set target.disable-aslr false"
       ]
-    },
-    {
-      "name": "CMake Debug Current Target",
-      "type": "lldb",
-      "request": "launch",
-      "program": "${command:cmake.launchTargetPath}",
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "terminal": "integrated"
     }
   ],
   "inputs": [

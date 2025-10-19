@@ -2,9 +2,9 @@
   "cmake.useCMakePresets": "always",
   "cmake.configureOnOpen": true,
 
-  // Pick your defaults so the status bar buttons “just work”
-  "cmake.defaultConfigurePreset": "debug-macos",
-  "cmake.defaultBuildPreset": "build-debug",
+  // Pick your defaults so the status bar buttons "just work"
+  "cmake.defaultConfigurePreset": "config-gtests-macos",
+  "cmake.defaultBuildPreset": "build-gtests",
   "cmake.testPreset": "gtests",
 
   // Quality-of-life

@@ -3,20 +3,6 @@
   "tasks": [
     /* -------------------- Configure -------------------- */
     {
-      "label": "Configure Debug",
-      "type": "shell",
-      "command": "cmake --preset config-debug-macos",
-      "group": { "kind": "build" },
-      "problemMatcher": []
-    },
-    {
-      "label": "Configure Release",
-      "type": "shell",
-      "command": "cmake --preset config-release-macos",
-      "group": { "kind": "build" },
-      "problemMatcher": []
-    },
-    {
       "label": "Configure GTests",
       "type": "shell",
       "command": "cmake --preset config-gtests-macos",
@@ -25,20 +11,6 @@
     },
 
     /* ---------------------- Build ---------------------- */
-    {
-      "label": "Build Debug",
-      "type": "shell",
-      "command": "cmake --build --preset build-debug",
-      "group": { "kind": "build", "isDefault": true },
-      "problemMatcher": "$gcc"
-    },
-    {
-      "label": "Build Release",
-      "type": "shell",
-      "command": "cmake --build --preset build-release",
-      "group": { "kind": "build" },
-      "problemMatcher": "$gcc"
-    },
     {
       "label": "Build GTests",
       "type": "shell",
@@ -58,18 +30,6 @@
 
     /* ---------------------- Clean ---------------------- */
     {
-      "label": "Clean Debug",
-      "type": "shell",
-      "command": "cmake --build --preset build-debug --target clean",
-      "problemMatcher": []
-    },
-    {
-      "label": "Clean Release",
-      "type": "shell",
-      "command": "cmake --build --preset build-release --target clean",
-      "problemMatcher": []
-    },
-    {
       "label": "Clean GTests",
       "type": "shell",
       "command": "cmake --build --preset build-gtests --target clean",
@@ -78,7 +38,7 @@
     {
       "label": "Clean All",
       "type": "shell",
-      "command": "cmake --build --preset build-debug --target clean && cmake --build --preset build-release --target clean && cmake --build --preset build-gtests --target clean",
+      "command": "cmake --build --preset build-gtests --target clean",
       "problemMatcher": []
     },
 

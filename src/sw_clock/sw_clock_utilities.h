@@ -92,6 +92,20 @@ static inline double scaledppm_to_factor(long scaled_ppm) {
     return 1.0 + ((double)scaled_ppm) / (65536.0 * 1.0e6);
 }
 
+static inline void sleep_ns(long long ns)
+{
+    if (ns <= 0) return;
+
+    struct timespec ts;
+    ts.tv_sec  = (time_t)(ns / NS_PER_SEC);
+    ts.tv_nsec = (long)(ns % NS_PER_SEC);
+
+    /* Retry if interrupted by a signal */
+    while (nanosleep(&ts, NULL) == -1 && errno == EINTR) {
+        /* ts is updated with remaining time */
+    }
+}
+
 /**
  * Print a timespec structure as a formatted date/time string (UTC).
  * @param ts The timespec to print

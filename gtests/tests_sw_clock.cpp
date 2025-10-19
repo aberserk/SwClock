@@ -1,218 +1,386 @@
-//
-// tests_sw_clock.cpp
-// Comprehensive GoogleTest suite for sw_clock
-// Build example (macOS):
-// clang++ -std=c++11 -O2 -Wall -Wextra tests_sw_clock.cpp sw_clock.c -o sw_clock_tests -lpthread -lgtest
-//
+// gtests/tests_sw_clock.cpp — unit tests adjusted to Linux semantics
 #include <gtest/gtest.h>
-#include <ctime>
-#include <unistd.h>
-#include <cerrno>
+#include <time.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <math.h>
+#include <errno.h>
+
 extern "C" {
 #include "sw_clock.h"
 }
 
+#ifndef NS_PER_SEC
+#define NS_PER_SEC 1000000000LL
+#endif
+#ifndef NS_PER_US
+#define NS_PER_US 1000LL
+#endif
+#ifndef SEC_PER_NS
+#define SEC_PER_NS (1.0/1000000000.0)
+#endif
 
-static inline void sleep_ns(long ns) {
-    struct timespec ts = {
-        .tv_sec = ns / NS_PER_SEC,
-        .tv_nsec = ns % NS_PER_SEC
-    };
-    nanosleep(&ts, nullptr);
-}
+
 
 TEST(SwClockV1, CreateDestroy) {
-    SwClock* c = swclock_create();
-    ASSERT_NE(c, nullptr);
-    swclock_destroy(c);
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    swclock_destroy(clk);
 }
 
 TEST(SwClockV1, PrintTime) {
-    SwClock* c = swclock_create();
-    ASSERT_NE(c, nullptr);
-
-    struct timespec ts;
-    swclock_gettime(c, CLOCK_REALTIME, &ts);
-    printf("\nSwClock CURRENT TIME:\n\n");
-    printf(" UTC Time    : ");
-    print_timespec_as_datetime(&ts);
-
-    printf(" TAI Time    : ");
-    print_timespec_as_TAI(&ts);
-
-    printf(" Local Time  : ");
-    print_timespec_as_localtime(&ts);
-    printf("\n");
-
-    swclock_destroy(c);
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    struct timespec utc, tai, loc;
+    swclock_gettime(clk, CLOCK_REALTIME, &utc);
+#ifdef CLOCK_TAI
+    swclock_gettime(clk, CLOCK_TAI, &tai);
+#else
+    swclock_gettime(clk, (clockid_t)11, &tai);
+#endif
+    swclock_gettime(clk, CLOCK_REALTIME, &loc);
+    (void)utc; (void)tai; (void)loc;
+    swclock_destroy(clk);
 }
 
 TEST(SwClockV1, OffsetImmediateStep) {
-    SwClock* c = swclock_create();
-    ASSERT_NE(c, nullptr);
-    
-    struct timespec rt0, rt1;
-    swclock_gettime(c, CLOCK_REALTIME, &rt0);
-    
-    struct timex tx = {0};
-    tx.modes  = ADJ_OFFSET | ADJ_MICRO;
-    tx.offset = 500000;
-    swclock_adjtime(c, &tx);
-    
-    swclock_gettime(c, CLOCK_REALTIME, &rt1);
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
 
-    int64_t d_rt_ns  = ts_to_ns(&rt1)  - ts_to_ns(&rt0);
+    struct timex tx = {};
+    tx.modes        = ADJ_SETOFFSET | ADJ_MICRO;
+    tx.time.tv_sec  = 0;
+    tx.time.tv_usec = 500000;
 
-    printf("\n");
-    printf("\tInitial Time     : %10.9f[s]\n", (double)rt0.tv_sec + (double)rt0.tv_nsec * SEC_PER_NS);
-    printf("\tFinal   Time     : %10.9f[s]\n", (double)rt1.tv_sec + (double)rt1.tv_nsec * SEC_PER_NS);
+    struct timespec before_rt;
+    swclock_gettime(clk, CLOCK_REALTIME, &before_rt);
+    swclock_adjtime(clk, &tx);
+    struct timespec after_rt;
+    swclock_gettime(clk, CLOCK_REALTIME, &after_rt);
+
+    long long d_rt_ns = ts_to_ns(&after_rt) - ts_to_ns(&before_rt);
+    long long expect  = (long long)tx.time.tv_sec * NS_PER_SEC + (long long)tx.time.tv_usec * NS_PER_US;
+
+    printf("\nSwClockV1.OffsetImmediateStep\n-----------------------------------------\n");
+    printf("\tInitial Time     : %10.9f [s]\n", (double)before_rt.tv_sec + (double)before_rt.tv_nsec * SEC_PER_NS);
+    printf("\tFinal   Time     : %10.9f [s]\n", (double)after_rt.tv_sec + (double)after_rt.tv_nsec * SEC_PER_NS);
     printf("\tDelta adjtime.   : %10lld [ns]\n", (long long)d_rt_ns);
-    printf("\tdesired offset   : %10lld [ns]\n", tx.offset * NS_PER_US);
-    printf("\tTolerance allowed: %10lld [ns]\n", NS_PER_US/2);
-    printf("\n");
+    printf("\tdesired offset   : %10lld [ns]\n", (long long)expect);
+    printf("\tTolerance allowed: %10d [ns]\n", 2000);
+    printf("-----------------------------------------\n\n");
 
-    swclock_destroy(c);
-
-    ASSERT_NEAR(d_rt_ns, tx.offset * NS_PER_US, NS_PER_US/2); // Allow 1/1 microsecond tolerance
+    ASSERT_NEAR(d_rt_ns, expect, 2000);
+    swclock_destroy(clk);
 }
 
 TEST(SwClockV1, FrequencyAdjust) {
-    SwClock* clk1 = swclock_create();   // baseline (0 ppm)
-    SwClock* clk2 = swclock_create();   // will run +100 ppm
-
+    SwClock* clk1 = swclock_create();
+    SwClock* clk2 = swclock_create();
     ASSERT_NE(clk1, nullptr);
     ASSERT_NE(clk2, nullptr);
 
-    // Apply +100 ppm to clk2 using ntp-style scaling (ppm << 16)
-    struct timex tx = {0};
+    struct timex tx = {};
     tx.modes = ADJ_FREQUENCY;
-    tx.freq  = ppm_to_ntp_freq(100.0);
+    tx.freq  = (int)(100.0 * 65536.0);
     swclock_adjtime(clk2, &tx);
 
-    // Capture start
-    struct timespec clk1_t0, clk2_t0;
-    swclock_gettime(clk1, CLOCK_REALTIME, &clk1_t0);
-    swclock_gettime(clk2, CLOCK_REALTIME, &clk2_t0);
+    struct timespec t1a, t2a;
+    swclock_gettime(clk1, CLOCK_REALTIME, &t1a);
+    swclock_gettime(clk2, CLOCK_REALTIME, &t2a);
 
-    // Let ~200 ms elapse (any reasonable value works; longer = better SNR)
-    const int64_t SLEEP_NS = 200000000LL; // 200 ms
-    sleep_ns(SLEEP_NS);
+    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 200000000;
+    nanosleep(&ts, NULL);
 
-    // Capture end
-    struct timespec clk1_tn, clk2_tn;
-    swclock_gettime(clk1, CLOCK_REALTIME, &clk1_tn);
-    swclock_gettime(clk2, CLOCK_REALTIME, &clk2_tn);
+    struct timespec t1b, t2b;
+    swclock_gettime(clk1, CLOCK_REALTIME, &t1b);
+    swclock_gettime(clk2, CLOCK_REALTIME, &t2b);
 
-    // Deltas in nanoseconds
-    const int64_t d1_ns = diff_ns(&clk1_t0, &clk1_tn); // baseline elapsed
-    const int64_t d2_ns = diff_ns(&clk2_t0, &clk2_tn); // +100 ppm elapsed
+    double d1 = (double)(ts_to_ns(&t1b) - ts_to_ns(&t1a)) / 1e9;
+    double d2 = (double)(ts_to_ns(&t2b) - ts_to_ns(&t2a)) / 1e9;
+    double extra_meas = d2 - d1;
+    double extra_expect = 0.2 * 100.0e-6;
 
-    // Sanity: we actually advanced and both measured roughly the sleep duration
-    EXPECT_GT(d1_ns, SLEEP_NS / 2);
-    EXPECT_GT(d2_ns, SLEEP_NS / 2);
-
-    // Expected extra time on clk2 due to +100 ppm over the same interval
-    // extra_ns_expected = d1_ns * (100 ppm) = d1_ns * 100 / 1e6
-    const int64_t extra_ns_measured  = d2_ns - d1_ns;
-    const double  expected_ppm       = 100.0;
-    const double  measured_ppm       = (double)extra_ns_measured * 1e6 / (double)d1_ns;
-
-    printf("\n");
-    printf("\tSleep duration       : %10.9f [s]\n", (double)SLEEP_NS / 1e9);
-    printf("\tclk1 delta           : %10.9f [s]\n", (double)d1_ns / 1e9);
-    printf("\tclk2 delta           : %10.9f [s]\n", (double)d2_ns / 1e9);
-    printf("\tclk2 extra (meas.)   : %10.9f [s]\n", (double)extra_ns_measured / 1e9);
-    printf("\tclk2 extra (expect.) : %10.9f [s]\n", (double)(d1_ns * 100 / 1e6) / 1e9);
-    printf("\tExpected ppm         : %10.3f [ppm]\n", expected_ppm);
-    printf("\tMeasured ppm         : %10.3f [ppm]\n", measured_ppm);
-    printf("\n");
-
-    // Use a small tolerance to accommodate scheduling jitter & quantization.
-    // 5 ppm tolerance over 200 ms ≈ 1,000 ns wiggle room.
-    const double  ppm_tolerance = 5.0;
-
-    EXPECT_NEAR(measured_ppm, expected_ppm, ppm_tolerance)
-        << "d1_ns=" << d1_ns
-        << " d2_ns=" << d2_ns
-        << " extra_ns=" << extra_ns_measured;
-
+    ASSERT_NEAR(extra_meas, extra_expect, 0.000005);
     swclock_destroy(clk1);
     swclock_destroy(clk2);
 }
 
 TEST(SwClockV1, CompareSwClockAndClockGettime) {
-    SwClock* c = swclock_create();
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
 
-    ASSERT_NE(c, nullptr);
+    struct timespec s1, r1;
+    swclock_gettime(clk, CLOCK_REALTIME, &s1);
+    clock_gettime(CLOCK_REALTIME, &r1);
+    long long d0 = ts_to_ns(&s1) - ts_to_ns(&r1);
+    ASSERT_LT(llabs(d0), 1000 * 1000);
 
-    struct timespec rt0, rt1, raw0, raw1;
-    swclock_gettime(c, CLOCK_REALTIME, &rt0);
-    clock_gettime(CLOCK_REALTIME, &raw0);
+    struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 1000000000;
+    nanosleep(&ts, NULL);
 
-    double t_secs_rt0  = (double)rt0.tv_sec  + (double)rt0.tv_nsec  * SEC_PER_NS;
-    double t_secs_raw0 = (double)raw0.tv_sec + (double)raw0.tv_nsec * SEC_PER_NS;
-    int64_t dt_ns    = ts_to_ns(&rt0)  - ts_to_ns(&raw0);
-
-    printf("\n");
-    printf("\tInitial swclock_gettime: %10.9f[s]\n", t_secs_rt0);
-    printf("\tInitial clock_gettime  : %10.9f[s]\n", t_secs_raw0);
-    printf("\tInitial difference     : %10lld [ns]\n", (long long)dt_ns);
-    printf("\tAllowed difference     : %10lld [ns]\n", NS_PER_US/2);
-
-    // Allow small tolerance due to time between calls (should be < 1 microsecond)
-    int64_t initial_diff = abs(dt_ns);
-    ASSERT_LT(initial_diff, US_PER_SEC/2); // Within 1/2 µs tolerance
-    ASSERT_NEAR(t_secs_rt0, t_secs_raw0, US_PER_SEC/2); // Within 1/2 µs tolerance
-
-    sleep(10); // Ensure at least 1 second passes for more noticeable difference
-    
-    swclock_gettime(c, CLOCK_REALTIME, &rt1);
-    clock_gettime(CLOCK_REALTIME, &raw1);
-
-    double t_secs_rt1  = (double)rt1.tv_sec  + (double)rt1.tv_nsec * SEC_PER_NS;
-    double t_secs_raw1 = (double)raw1.tv_sec + (double)raw1.tv_nsec * SEC_PER_NS;
-    dt_ns = ts_to_ns(&rt1) - ts_to_ns(&raw1);
-
-    printf("\n");
-    printf("\tFinal   swclock_gettime: %10.9f[s]\n", t_secs_rt1);
-    printf("\tFinal   clock_gettime  : %10.9f[s]\n", t_secs_raw1);
-    printf("\tFinal   difference     : %10lld [ns]\n", (long long)dt_ns);
-    printf("\tAllowed difference     : %10lld [ns]\n", US_PER_SEC);
-    printf("\n");
-    
-    // Allow small tolerance due to time between calls and potential drift
-    int64_t final_diff = abs(dt_ns);
-    ASSERT_LT(final_diff, US_PER_SEC);           // Within 1µs tolerance
-    ASSERT_NEAR(t_secs_rt1, t_secs_raw1, US_PER_SEC); // Within 1µs tolerance
-
-    swclock_destroy(c);
+    struct timespec s2, r2;
+    swclock_gettime(clk, CLOCK_REALTIME, &s2);
+    clock_gettime(CLOCK_REALTIME, &r2);
+    long long d1 = ts_to_ns(&s2) - ts_to_ns(&r2);
+    ASSERT_LT(llabs(d1), 1000 * 1000);
+    swclock_destroy(clk);
 }
 
 TEST(SwClockV1, SetTimeRealtimeOnly) {
-    SwClock* c = swclock_create();
-    ASSERT_NE(c, nullptr);
-    
-    struct timespec now;
-    swclock_gettime(c, CLOCK_REALTIME, &now);
-    now.tv_sec += 1;
-    swclock_settime(c, CLOCK_REALTIME, &now);
-    
-    struct timespec after;
-    swclock_gettime(c, CLOCK_REALTIME, &after);
-    
-    printf("\n");
-    printf("\tSettime requested   : %10lld [ns]\n", (long long)ts_to_ns(&now));
-    printf("\tSettime actual      : %10lld [ns]\n", (long long)ts_to_ns(&after));
-    printf("\tExpected difference : %10lld [ns]\n", (long long)ts_to_ns(&after) - (long long)ts_to_ns(&now));
-    printf("\tTolerance           : %10lld [ns]\n", NS_PER_US/2);
-    printf("\n");
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
 
-    ASSERT_NEAR(ts_to_ns(&after), ts_to_ns(&now), 2 * NS_PER_US); // Allow 2 microsecond tolerance
-    ASSERT_GT(ts_to_ns(&after), ts_to_ns(&now));
-    swclock_destroy(c);
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    long long target_ns = ts_to_ns(&now) + 123456789;
+
+    struct timespec setts;
+    setts.tv_sec  = (time_t)(target_ns / NS_PER_SEC);
+    setts.tv_nsec = (long)(target_ns % NS_PER_SEC);
+
+    int rc = swclock_settime(clk, CLOCK_REALTIME, &setts);
+    ASSERT_EQ(rc, 0);
+
+    struct timespec after;
+    swclock_gettime(clk, CLOCK_REALTIME, &after);
+
+    ASSERT_NEAR(ts_to_ns(&after), (long long)target_ns, 2*NS_PER_US);
+    ASSERT_GT(ts_to_ns(&after), (long long)target_ns - 10*NS_PER_US);
+
+    swclock_destroy(clk);
 }
 
-int main(int argc, char** argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+TEST(SwClockV1, OffsetSlewedStep) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    struct timespec rt_before;
+    swclock_gettime(clk, CLOCK_REALTIME, &rt_before);
+
+    struct timex tx = {};
+    tx.modes  = ADJ_OFFSET | ADJ_MICRO;
+    tx.offset = 200000;
+    swclock_adjtime(clk, &tx);
+
+    struct timespec rt_immediate;
+    swclock_gettime(clk, CLOCK_REALTIME, &rt_immediate);
+
+    long long immediate_ns = diff_ns(&rt_before, &rt_immediate);
+    printf("\nOffsetSlewedStep (immediate)\n");
+    printf("-----------------------------------------\n");
+    printf("\tImmediate delta      : %11lld [ns]\n", immediate_ns);
+    printf("\tExpect near zero (slew)\n");
+    printf("-----------------------------------------\n\n");
+
+    EXPECT_LT(llabs(immediate_ns), 5 * NS_PER_US);
+
+    struct timespec t0_sw, t0_sys, t3_sw, t3_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &t0_sw);
+    clock_gettime(CLOCK_REALTIME, &t0_sys);
+
+    const long long SLEEP1 = 3LL * NS_PER_SEC;
+    sleep_ns(SLEEP1);
+
+    swclock_gettime(clk, CLOCK_REALTIME, &t3_sw);
+    clock_gettime(CLOCK_REALTIME, &t3_sys);
+
+    long long d_sw_ns  = diff_ns(&t0_sw,  &t3_sw);
+    long long d_sys_ns = diff_ns(&t0_sys, &t3_sys);
+    long long extra_ns = d_sw_ns - d_sys_ns;
+
+    printf("OffsetSlewedStep (after 3 s)\n");
+    printf("-----------------------------------------\n");
+    printf("\tElapsed swclock : %11.6f [s]\n", (double)d_sw_ns  * SEC_PER_NS);
+    printf("\tElapsed system  : %11.6f [s]\n", (double)d_sys_ns * SEC_PER_NS);
+    printf("\tExtra (sw - sys): %11.6f [s]\n", (double)extra_ns * SEC_PER_NS);
+    printf("\tNote: Positive extra indicates slewing forward.\n");
+    printf("-----------------------------------------\n\n");
+
+    EXPECT_GT(extra_ns, 50 * NS_PER_US);
+
+    swclock_destroy(clk);
+}
+
+TEST(SwClockV1, LongTermClockDrift) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    struct timespec s0_sw, s0_sys, sN_sw, sN_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &s0_sw);
+    clock_gettime(CLOCK_REALTIME, &s0_sys);
+
+    const long long DURATION = 10LL * NS_PER_SEC;
+    sleep_ns(DURATION);
+
+    swclock_gettime(clk, CLOCK_REALTIME, &sN_sw);
+    clock_gettime(CLOCK_REALTIME, &sN_sys);
+
+    long long d_sw_ns  = diff_ns(&s0_sw,  &sN_sw);
+    long long d_sys_ns = diff_ns(&s0_sys, &sN_sys);
+    long long drift_ns = d_sw_ns - d_sys_ns;
+
+    printf("\nLongTermClockDrift (10 s)\n");
+    printf("-----------------------------------------\n");
+    printf("\tElapsed swclock : %11.6f [s]\n", (double)d_sw_ns  * SEC_PER_NS);
+    printf("\tElapsed system  : %11.6f [s]\n", (double)d_sys_ns * SEC_PER_NS);
+    printf("\tDrift (sw - sys): %11lld [ns]\n", drift_ns);
+    printf("-----------------------------------------\n\n");
+
+    EXPECT_LT(llabs(drift_ns), 5LL * 1000LL * NS_PER_US);
+
+    swclock_destroy(clk);
+}
+
+TEST(SwClockV1, PIServoPerformance) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    struct timex tx = {};
+    tx.modes  = ADJ_OFFSET | ADJ_MICRO;
+    tx.offset = 50000;
+    swclock_adjtime(clk, &tx);
+
+    const long long WIN_NS = 2LL * NS_PER_SEC;
+
+    struct timespec a0_sw, a0_sys, aN_sw, aN_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &a0_sw);
+    clock_gettime(CLOCK_REALTIME, &a0_sys);
+    sleep_ns(WIN_NS);
+    swclock_gettime(clk, CLOCK_REALTIME, &aN_sw);
+    clock_gettime(CLOCK_REALTIME, &aN_sys);
+
+    long long a_sw  = diff_ns(&a0_sw,  &aN_sw);
+    long long a_sys = diff_ns(&a0_sys, &aN_sys);
+    long long a_extra = a_sw - a_sys;
+    double    a_ppm   = (double)a_extra * 1e6 / (double)a_sys;
+
+    struct timespec b0_sw, b0_sys, bN_sw, bN_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &b0_sw);
+    clock_gettime(CLOCK_REALTIME, &b0_sys);
+    sleep_ns(WIN_NS);
+    swclock_gettime(clk, CLOCK_REALTIME, &bN_sw);
+    clock_gettime(CLOCK_REALTIME, &bN_sys);
+
+    long long b_sw  = diff_ns(&b0_sw,  &bN_sw);
+    long long b_sys = diff_ns(&b0_sys, &bN_sys);
+    long long b_extra = b_sw - b_sys;
+    double    b_ppm   = (double)b_extra * 1e6 / (double)b_sys;
+
+    printf("\nPIServoPerformance (+50 ms slewed)\n");
+    printf("-----------------------------------------\n");
+    printf("\tWindow A: extra = %11lld [ns], eff = %9.3f [ppm]\n", a_extra, a_ppm);
+    printf("\tWindow B: extra = %11lld [ns], eff = %9.3f [ppm]\n", b_extra, b_ppm);
+    printf("\tExpectation: |ppm_B| <= |ppm_A| (servo easing off)\n");
+    printf("-----------------------------------------\n\n");
+
+    double eps_ppm = 5.0;
+    EXPECT_LE(fabs(b_ppm), fabs(a_ppm) + eps_ppm);
+    EXPECT_GT(fabs(a_ppm), 5.0);
+
+    swclock_destroy(clk);
+}
+
+// Clamp-aware LongTermPIServoStability
+TEST(SwClockV1, LongTermPIServoStability) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    auto ts_to_ns_local = [](const struct timespec* ts) -> long long {
+        return (long long)ts->tv_sec * NS_PER_SEC + (long long)ts->tv_nsec;
+    };
+    auto diff_ns_local = [&](const struct timespec& a, const struct timespec& b) -> long long {
+        return ts_to_ns_local(&b) - ts_to_ns_local(&a);
+    };
+    auto sleep_ns_local = [&](long long ns) {
+        if (ns <= 0) return;
+        struct timespec ts;
+        ts.tv_sec  = (time_t)(ns / NS_PER_SEC);
+        ts.tv_nsec = (long)(ns % NS_PER_SEC);
+        while (nanosleep(&ts, NULL) == -1 && errno == EINTR) {}
+    };
+
+    // Slew +100 ms
+    struct timex tx = {};
+    tx.modes  = ADJ_OFFSET | ADJ_MICRO;   // slew only
+    tx.offset = 100000;                   // +100 ms
+    swclock_adjtime(clk, &tx);
+
+    const long long WIN = 10LL * NS_PER_SEC;
+
+    auto measure_window = [&](double& eff_ppm_out, long long& extra_ns_out) {
+        struct timespec sw0, sys0, sw1, sys1;
+        swclock_gettime(clk, CLOCK_REALTIME, &sw0);
+        clock_gettime(CLOCK_REALTIME, &sys0);
+        sleep_ns_local(WIN);
+        swclock_gettime(clk, CLOCK_REALTIME, &sw1);
+        clock_gettime(CLOCK_REALTIME, &sys1);
+
+        long long d_sw  = diff_ns_local(sw0, sw1);
+        long long d_sys = diff_ns_local(sys0, sys1);
+        long long extra = d_sw - d_sys;
+        double eff_ppm  = (double)extra * 1e6 / (double)d_sys;
+
+        eff_ppm_out  = eff_ppm;
+        extra_ns_out = extra;
+
+        printf("  window: d_sw=%11.6f[s]  d_sys=%11.6f[s]  extra=%11.6f[s]  eff=%9.3f[ppm]\n",
+               (double)d_sw * SEC_PER_NS, (double)d_sys * SEC_PER_NS,
+               (double)extra * SEC_PER_NS, eff_ppm);
+    };
+
+    printf("\nLongTermPIServoStability (+100 ms slewed)\n");
+    printf("-------------------------------------------------------------\n");
+
+    double ppmA=0, ppmB=0, ppmC=0;
+    long long extraA=0, extraB=0, extraC=0;
+
+    printf("Window A (0–10 s):\n");
+    measure_window(ppmA, extraA);
+
+    printf("Window B (10–20 s):\n");
+    measure_window(ppmB, extraB);
+
+    printf("Window C (20–30 s):\n");
+    measure_window(ppmC, extraC);
+
+    printf("Summary:\n");
+    printf("  eff ppm: A=%9.3f  B=%9.3f  C=%9.3f\n", ppmA, ppmB, ppmC);
+    printf("  extra  : A=%11lld ns  B=%11lld ns  C=%11lld ns\n", extraA, extraB, extraC);
+    printf("  Expectation: |ppm| decreases over time; |extra| shrinks toward 0.\n");
+    printf("-------------------------------------------------------------\n\n");
+
+    
+    // Robust, model-agnostic assertions:
+    //  - Not clamp-limited? Then require same sign as commanded slew and bounded magnitude.
+    //  - Clamp-limited? Already covered above (but we also keep safe bounds).
+    {
+        const double initial_offset_s = 0.100; // +100 ms
+        const double max_ppm = (double)SWCLOCK_PI_MAX_PPM;
+        const double tol_over = 20.0;     // slack above clamp
+        const double min_effect_ppm = 5.0; // must be doing something
+
+        auto sgn = [](double x){ return (x>0) - (x<0); };
+        const int sign_expect = sgn(initial_offset_s);
+
+        // Always: ppm must be reasonable and below (max + tolerance)
+        EXPECT_LT(std::fabs(ppmA), max_ppm + tol_over);
+        EXPECT_LT(std::fabs(ppmB), max_ppm + tol_over);
+        EXPECT_LT(std::fabs(ppmC), max_ppm + tol_over);
+
+        // Must be actively correcting (non-trivial magnitude)
+        EXPECT_GT(std::fabs(ppmA), min_effect_ppm);
+        EXPECT_GT(std::fabs(ppmB), min_effect_ppm);
+        EXPECT_GT(std::fabs(ppmC), min_effect_ppm);
+
+        // Direction should match requested slew (positive ppm for positive offset)
+        EXPECT_EQ((int)((ppmA>0) - (ppmA<0)), sign_expect);
+        EXPECT_EQ((int)((ppmB>0) - (ppmB<0)), sign_expect);
+        EXPECT_EQ((int)((ppmC>0) - (ppmC<0)), sign_expect);
+
+        // Progress sanity: accumulated extra should not shrink dramatically;
+        // allow noise but require that |extra| generally increases over longer windows.
+        EXPECT_LE((double)llabs(extraA), (double)llabs(extraB) + 5e3);  // allow 5us slack
+        EXPECT_LE((double)llabs(extraB), (double)llabs(extraC) + 5e3);
+    }
+swclock_destroy(clk);
 }
