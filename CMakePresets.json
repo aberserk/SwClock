@@ -2,7 +2,7 @@
   "version": 3,
   "configurePresets": [
     {
-      "name": "base-macos",
+      "name": "config-base-macos",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
@@ -15,8 +15,8 @@
       }
     },
     {
-      "name": "debug-macos",
-      "inherits": "base-macos",
+      "name": "config-debug-macos",
+      "inherits": "config-base-macos",
       "displayName": "Configure macOS Debug",
       "binaryDir": "${sourceDir}/build/ninja-debug-macos",
       "cacheVariables": {
@@ -24,8 +24,8 @@
       }
     },
     {
-      "name": "release-macos",
-      "inherits": "base-macos",
+      "name": "config-release-macos",
+      "inherits": "config-base-macos",
       "displayName": "Configure macOS Release",
       "binaryDir": "${sourceDir}/build/ninja-release-macos",
       "cacheVariables": {
@@ -33,8 +33,8 @@
       }
     },
     {
-      "name": "gtests-macos",
-      "inherits": "base-macos",
+      "name": "config-gtests-macos",
+      "inherits": "config-base-macos",
       "displayName": "Configure macOS GTests",
       "binaryDir": "${sourceDir}/build/ninja-gtests-macos",
       "cacheVariables": {
@@ -48,19 +48,19 @@
     {
       "name": "build-debug",
       "displayName": "Build macOS Debug",
-      "configurePreset": "debug-macos",
+      "configurePreset": "config-debug-macos",
       "jobs": 8
     },
     {
       "name": "build-release",
       "displayName": "Build macOS Release",
-      "configurePreset": "release-macos",
+      "configurePreset": "config-release-macos",
       "jobs": 8
     },
     {
       "name": "build-gtests",
       "displayName": "Build macOS GTests",
-      "configurePreset": "gtests-macos",
+      "configurePreset": "config-gtests-macos",
       "targets": ["swclock_gtests"],
       "jobs": 8
     }
@@ -69,7 +69,7 @@
     {
       "name": "gtests",
       "displayName": "Run Google Tests",
-      "configurePreset": "gtests-macos",
+      "configurePreset": "config-gtests-macos",
       "output": { "outputOnFailure": true },
       "execution": { "jobs": 4, "stopOnFailure": false }
     }

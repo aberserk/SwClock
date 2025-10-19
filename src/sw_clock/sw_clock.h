@@ -66,6 +66,8 @@ extern "C" {
   #define ADJ_MICRO       0x1000
   #define ADJ_NANO        0x2000
 
+  #define TIME_OK         0
+  #define TIME_BAD        5
   // Status bits (stored only)
   #define STA_PLL         0x0001
   #define STA_UNSYNC      0x0040
@@ -97,6 +99,9 @@ int      swclock_gettime(SwClock* c, clockid_t clk_id, struct timespec *tp);
 int      swclock_settime(SwClock* c, clockid_t clk_id, const struct timespec *tp);
 // Functionally similar to Linux ntp_adjtime (subset): ADJ_FREQUENCY, ADJ_OFFSET, ADJ_SETOFFSET, ADJ_STATUS
 int      swclock_adjtime(SwClock* c, struct timex *tptr);
+
+// Explicit poll (normally called by the internal thread). Safe to call manually.
+void     swclock_poll(SwClock* c);
 
 #ifdef __cplusplus
 } // extern "C"

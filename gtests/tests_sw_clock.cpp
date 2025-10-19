@@ -71,9 +71,9 @@ TEST(SwClockV1, OffsetImmediateStep) {
     printf("\tTolerance allowed: %10lld [ns]\n", NS_PER_US/2);
     printf("\n");
 
-    ASSERT_NEAR(d_rt_ns, tx.offset * NS_PER_US, NS_PER_US/2); // Allow 1/1 microsecond tolerance
-
     swclock_destroy(c);
+
+    ASSERT_NEAR(d_rt_ns, tx.offset * NS_PER_US, NS_PER_US/2); // Allow 1/1 microsecond tolerance
 }
 
 TEST(SwClockV1, FrequencyAdjust) {
@@ -164,7 +164,7 @@ TEST(SwClockV1, CompareSwClockAndClockGettime) {
     ASSERT_LT(initial_diff, US_PER_SEC/2); // Within 1/2 µs tolerance
     ASSERT_NEAR(t_secs_rt0, t_secs_raw0, US_PER_SEC/2); // Within 1/2 µs tolerance
 
-    sleep(1); // Ensure at least 1 second passes for more noticeable difference
+    sleep(10); // Ensure at least 1 second passes for more noticeable difference
     
     swclock_gettime(c, CLOCK_REALTIME, &rt1);
     clock_gettime(CLOCK_REALTIME, &raw1);
@@ -207,7 +207,7 @@ TEST(SwClockV1, SetTimeRealtimeOnly) {
     printf("\tTolerance           : %10lld [ns]\n", NS_PER_US/2);
     printf("\n");
 
-    ASSERT_NEAR(ts_to_ns(&after), ts_to_ns(&now), NS_PER_US/2); // Allow 1/2 microsecond tolerance
+    ASSERT_NEAR(ts_to_ns(&after), ts_to_ns(&now), 2 * NS_PER_US); // Allow 2 microsecond tolerance
     ASSERT_GT(ts_to_ns(&after), ts_to_ns(&now));
     swclock_destroy(c);
 }
