@@ -244,10 +244,10 @@ TEST(SwClockV1, PIServoPerformance) {
 
     struct timespec a0_sw, a0_sys, aN_sw, aN_sys;
     swclock_gettime(clk, CLOCK_REALTIME, &a0_sw);
-    clock_gettime(CLOCK_REALTIME, &a0_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &a0_sys);
     sleep_ns(WIN_NS);
     swclock_gettime(clk, CLOCK_REALTIME, &aN_sw);
-    clock_gettime(CLOCK_REALTIME, &aN_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &aN_sys);
 
     long long a_sw  = diff_ns(&a0_sw,  &aN_sw);
     long long a_sys = diff_ns(&a0_sys, &aN_sys);
@@ -256,10 +256,10 @@ TEST(SwClockV1, PIServoPerformance) {
 
     struct timespec b0_sw, b0_sys, bN_sw, bN_sys;
     swclock_gettime(clk, CLOCK_REALTIME, &b0_sw);
-    clock_gettime(CLOCK_REALTIME, &b0_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b0_sys);
     sleep_ns(WIN_NS);
     swclock_gettime(clk, CLOCK_REALTIME, &bN_sw);
-    clock_gettime(CLOCK_REALTIME, &bN_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &bN_sys);
 
     long long b_sw  = diff_ns(&b0_sw,  &bN_sw);
     long long b_sys = diff_ns(&b0_sys, &bN_sys);
@@ -312,10 +312,10 @@ TEST(SwClockV1, PIServoPerformance2) {
     // Window A
     struct timespec a0_sw, a0_sys, aN_sw, aN_sys;
     swclock_gettime(clk, CLOCK_REALTIME, &a0_sw);
-    clock_gettime(CLOCK_REALTIME, &a0_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &a0_sys);
     sleep_ns(WIN_NS);
     swclock_gettime(clk, CLOCK_REALTIME, &aN_sw);
-    clock_gettime(CLOCK_REALTIME, &aN_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &aN_sys);
 
     long long a_sw    = diff_ns(a0_sw,  aN_sw);
     long long a_sys   = diff_ns(a0_sys, aN_sys);
@@ -325,10 +325,10 @@ TEST(SwClockV1, PIServoPerformance2) {
     // Window B
     struct timespec b0_sw, b0_sys, bN_sw, bN_sys;
     swclock_gettime(clk, CLOCK_REALTIME, &b0_sw);
-    clock_gettime(CLOCK_REALTIME, &b0_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &b0_sys);
     sleep_ns(WIN_NS);
     swclock_gettime(clk, CLOCK_REALTIME, &bN_sw);
-    clock_gettime(CLOCK_REALTIME, &bN_sys);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &bN_sys);
 
     long long b_sw    = diff_ns(b0_sw,  bN_sw);
     long long b_sys   = diff_ns(b0_sys, bN_sys);
