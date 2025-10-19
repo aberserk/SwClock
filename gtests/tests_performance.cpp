@@ -359,10 +359,10 @@ TEST(Perf, HoldoverDrift) {
 
   struct timespec sw0, rt0, sw1, rt1;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
-  clock_gettime(CLOCK_REALTIME, &rt0);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
   sleep_ns((long long)HOLDOVER_S * NS_PER_SEC);
   swclock_gettime(clk, CLOCK_REALTIME, &sw1);
-  clock_gettime(CLOCK_REALTIME, &rt1);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
 
   long long d_sw  = ts_to_ns(&sw1) - ts_to_ns(&sw0);
   long long d_sys = ts_to_ns(&rt1) - ts_to_ns(&rt0);
