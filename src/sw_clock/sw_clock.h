@@ -90,17 +90,48 @@ extern "C" {
 // Opaque handle
 typedef struct SwClock SwClock;
 
-// API
+/**
+ * Create a new software clock instance.
+ * @return Pointer to the new SwClock instance, or NULL on failure.
+ */
 SwClock* swclock_create(void);
+
+/** 
+ * Destroy a software clock instance. 
+ * @param c Pointer to SwClock instance to destroy
+ */
 void     swclock_destroy(SwClock* c);
-// Functionally identical to Linux clock_gettime for REALTIME/MONOTONIC/RAW (RAW passthrough)
+
+/** 
+ * Functionally identical to Linux clock_gettime for REALTIME/MONOTONIC/RAW (RAW passthrough) 
+ * @param c Pointer to SwClock instance
+ * @param clk_id Clock ID (CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW)
+ * @param tp Pointer to timespec structure to receive the time
+ * @return 0 on success, -1 on failure (errno set)
+ */
 int      swclock_gettime(SwClock* c, clockid_t clk_id, struct timespec *tp);
-// Functionally identical to Linux clock_settime for REALTIME (MONOTONIC cannot be set)
+
+/** 
+ * Functionally identical to Linux clock_settime for REALTIME (MONOTONIC cannot be set) 
+ * @param c Pointer to SwClock instance
+ * @param clk_id Clock ID (CLOCK_REALTIME, CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW)
+ * @param tp Pointer to timespec structure containing the new time
+ * @return 0 on success, -1 on failure (errno set)
+ */
 int      swclock_settime(SwClock* c, clockid_t clk_id, const struct timespec *tp);
-// Functionally similar to Linux ntp_adjtime (subset): ADJ_FREQUENCY, ADJ_OFFSET, ADJ_SETOFFSET, ADJ_STATUS
+
+/** 
+ * Functionally identical to Linux adjtimex 
+ * @param c Pointer to SwClock instance
+ * @param tptr Pointer to timex structure for adjustment parameters and readback
+ * @return TIME_OK on success, TIME_BAD on failure (errno set)
+ */
 int      swclock_adjtime(SwClock* c, struct timex *tptr);
 
-// Explicit poll (normally called by the internal thread). Safe to call manually.
+/**
+ * Explicit poll (normally called by the internal thread). Safe to call manually.
+ * @param c Pointer to SwClock instance
+ */
 void     swclock_poll(SwClock* c);
 
 #ifdef __cplusplus
