@@ -55,16 +55,16 @@ extern "C" {
   };
 
   // Modes
-  #define ADJ_OFFSET      0x0001
-  #define ADJ_FREQUENCY   0x0002
-  #define ADJ_MAXERROR    0x0004
-  #define ADJ_ESTERROR    0x0008
-  #define ADJ_STATUS      0x0010
-  #define ADJ_TIMECONST   0x0020
-  #define ADJ_TAI         0x0080
-  #define ADJ_SETOFFSET   0x0100
-  #define ADJ_MICRO       0x1000
-  #define ADJ_NANO        0x2000
+  #define ADJ_OFFSET      0x0001 /* phase offset */
+  #define ADJ_FREQUENCY   0x0002 /* frequency offset */
+  #define ADJ_MAXERROR    0x0004 /* (unused here) */
+  #define ADJ_ESTERROR    0x0008 /* (unused here) */
+  #define ADJ_STATUS      0x0010 /* (unused here) */
+  #define ADJ_TIMECONST   0x0020 /* (unused here) */
+  #define ADJ_TAI         0x0080 /* Adjust TAI offset*/
+  #define ADJ_SETOFFSET   0x0100 /* set time offset */
+  #define ADJ_MICRO       0x1000 /* microsec offset */
+  #define ADJ_NANO        0x2000 /* nanosec offset */
 
   #define TIME_OK         0
   #define TIME_BAD        5
@@ -87,8 +87,7 @@ extern "C" {
   #endif
 #endif
 
-// Opaque handle
-typedef struct SwClock SwClock;
+typedef struct SwClock SwClock; // SwClock opaque type
 
 /**
  * Create a new software clock instance.
