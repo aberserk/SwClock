@@ -29,11 +29,11 @@ extern "C" {
 #define SWCLOCK_POLL_NS          10*1000*1000L  // 10 ms (100 Hz)
 
 // PI controller gains (units explained below)
-#define SWCLOCK_PI_KP_PPM_PER_S  200.0   // For 1 s of phase error, command ~200 ppm
-#define SWCLOCK_PI_KI_PPM_PER_S2   8.0   // Integral gain (ppm per s^2)
+#define SWCLOCK_PI_KP_PPM_PER_S  200.0   // ppm/s For 1 s of phase error, command ~200 ppm
+#define SWCLOCK_PI_KI_PPM_PER_S2   8.0   // ppm/s² Integral gain (ppm per s^2)
 
 // Limit the PI frequency correction (in ppm)
-#define SWCLOCK_PI_MAX_PPM       200.0   // conservative default
+#define SWCLOCK_PI_MAX_PPM       200.0   // ppm conservative default
 
 // When the remaining phase error magnitude drops below this, zero the PI
 #define SWCLOCK_PHASE_EPS_NS     20000LL   // 20 µs

@@ -280,6 +280,98 @@ TEST(SwClockV1, PIServoPerformance) {
     swclock_destroy(clk);
 }
 
+TEST(SwClockV1, PIServoPerformance2) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    // Request +50 ms slew; Linux semantics: slew only (no step)
+    const double OFFSET_S = 0.050; // 50 ms
+    struct timex tx = {};
+    tx.modes  = ADJ_OFFSET | ADJ_MICRO;
+    tx.offset = (int)llround(OFFSET_S * 1e6);
+    swclock_adjtime(clk, &tx);
+
+    // Measure over two windows (each 2 s). Compute effective ppm = (extra_ns / window_ns) * 1e6.
+    const double WIN_S = 2.0;
+    const long long WIN_NS = (long long)llround(WIN_S * 1e9);
+
+    auto ts_to_ns = [](const struct timespec* ts)->long long {
+        return (long long)ts->tv_sec * 1000000000LL + (long long)ts->tv_nsec;
+    };
+    auto diff_ns = [&](const struct timespec& a, const struct timespec& b)->long long {
+        return ts_to_ns(&b) - ts_to_ns(&a);
+    };
+    auto sleep_ns = [&](long long ns) {
+        if (ns <= 0) return;
+        struct timespec ts;
+        ts.tv_sec  = (time_t)(ns / 1000000000LL);
+        ts.tv_nsec = (long)(ns % 1000000000LL);
+        while (nanosleep(&ts, nullptr) == -1 && errno == EINTR) {}
+    };
+
+    // Window A
+    struct timespec a0_sw, a0_sys, aN_sw, aN_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &a0_sw);
+    clock_gettime(CLOCK_REALTIME, &a0_sys);
+    sleep_ns(WIN_NS);
+    swclock_gettime(clk, CLOCK_REALTIME, &aN_sw);
+    clock_gettime(CLOCK_REALTIME, &aN_sys);
+
+    long long a_sw    = diff_ns(a0_sw,  aN_sw);
+    long long a_sys   = diff_ns(a0_sys, aN_sys);
+    long long a_extra = a_sw - a_sys;
+    double    a_ppm   = (double)a_extra * 1e6 / (double)a_sys;
+
+    // Window B
+    struct timespec b0_sw, b0_sys, bN_sw, bN_sys;
+    swclock_gettime(clk, CLOCK_REALTIME, &b0_sw);
+    clock_gettime(CLOCK_REALTIME, &b0_sys);
+    sleep_ns(WIN_NS);
+    swclock_gettime(clk, CLOCK_REALTIME, &bN_sw);
+    clock_gettime(CLOCK_REALTIME, &bN_sys);
+
+    long long b_sw    = diff_ns(b0_sw,  bN_sw);
+    long long b_sys   = diff_ns(b0_sys, bN_sys);
+    long long b_extra = b_sw - b_sys;
+    double    b_ppm   = (double)b_extra * 1e6 / (double)b_sys;
+
+    // ---- Expectation from gains ----
+    // Over a window of length T, with phase error ~ OFFSET_S (small window assumption):
+    //   ppm_instant(t) ≈ Kp * OFFSET_S + Ki * OFFSET_S * t
+    // Average over [0, T]: ppm_avg ≈ Kp*OFFSET_S + 0.5*Ki*OFFSET_S*T
+    // Clamp by SWCLOCK_PI_MAX_PPM.
+    double Kp = (double)SWCLOCK_PI_KP_PPM_PER_S;
+    double Ki = (double)SWCLOCK_PI_KI_PPM_PER_S2;
+    double max_ppm = (double)SWCLOCK_PI_MAX_PPM;
+
+    double ppm0           = Kp * OFFSET_S;
+    double ppm_win_est    = ppm0 + 0.5 * Ki * OFFSET_S * WIN_S;
+    double expected_target = std::min(max_ppm, std::fabs(ppm_win_est));
+
+    // Tolerances: allow scheduler noise and model mismatch
+    double eps_ppm = 5.0;                // easing-off tolerance
+    double lower_ppm = std::max(0.5, 0.5 * expected_target); // require at least half the expected target, but > 0.5 ppm
+
+    printf("\nPIServoPerformance (+50 ms slewed)\n");
+    printf("-----------------------------------------\n");
+    printf("Gains: Kp=%g [ppm/s], Ki=%g [ppm/s^2], MAX=%g [ppm]\n", Kp, Ki, max_ppm);
+    printf("Offset: %.0f ms, Window: %.1f s -> ppm0=%.2f, ppm_win_est=%.2f, expected_target=%.2f\n",
+           OFFSET_S*1e3, WIN_S, ppm0, ppm_win_est, expected_target);
+    printf("\tWindow A: extra = %11lld [ns], eff = %9.3f [ppm]\n", a_extra, a_ppm);
+    printf("\tWindow B: extra = %11lld [ns], eff = %9.3f [ppm]\n", b_extra, b_ppm);
+    printf("\tChecks:  |A| >= %.2f ppm, and |B| <= |A| + %.1f ppm\n", lower_ppm, eps_ppm);
+    printf("-----------------------------------------\n\n");
+
+    // Assertions:
+    // 1) Some reasonable correction magnitude based on configured gains
+    EXPECT_GE(std::fabs(a_ppm), lower_ppm);
+    // 2) Servo backs off or at least doesn't ramp up significantly after the first window
+    EXPECT_LE(std::fabs(b_ppm), std::fabs(a_ppm) + eps_ppm);
+
+    swclock_destroy(clk);
+}
+
+
 // Clamp-aware LongTermPIServoStability
 TEST(SwClockV1, LongTermPIServoStability) {
     SwClock* clk = swclock_create();
