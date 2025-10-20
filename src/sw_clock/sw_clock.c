@@ -17,10 +17,6 @@
 
 // ================= Helpers =================
 
-static inline long ppm_to_scaledppm(double ppm) {
-    return (long)llround(ppm * 65536.0);
-}
-
 static inline double scaledppm_to_ppm(long scaled) {
     return ((double)scaled) / 65536.0;
 }
@@ -43,6 +39,7 @@ struct SwClock {
     // PI controller state (produces an additional freq correction in ppm)
     double  pi_freq_ppm;           // output
     double  pi_int_error_s;        // integral of error (seconds)
+    bool    pi_servo_enabled;      // whether PI servo is active
 
     // Outstanding phase error to slew out (nanoseconds). Sign indicates direction.
     long long remaining_phase_ns;
@@ -146,7 +143,9 @@ void swclock_poll(SwClock* c) {
     int64_t dt_ns = ts_to_ns(&c->ref_mono_raw) - ts_to_ns(&before);
     double dt_s = (dt_ns > 0) ? (double)dt_ns / 1e9 : (double)SWCLOCK_POLL_NS / 1e9;
 
-    swclock_pi_step(c, dt_s);
+    if (c->pi_servo_enabled) {
+        swclock_pi_step(c, dt_s);
+    }
 
     pthread_mutex_unlock(&c->lock);
 }
@@ -171,6 +170,7 @@ SwClock* swclock_create(void) {
     c->freq_scaled_ppm    = 0;
     c->pi_freq_ppm        = 0.0;
     c->pi_int_error_s     = 0.0;
+    c->pi_servo_enabled   = true;
     c->remaining_phase_ns = 0;
 
     c->status   = 0; 
@@ -336,6 +336,38 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
     return TIME_OK;
 }
 
+void swclock_reset(SwClock* c) {
+
+    /* IMPORTANT: Not thread-safe use pthread_mutex_lock(&c->lock); to call this function */
+    if (!c) return;
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &c->ref_mono_raw);
+
+    struct timespec sys_rt = {0}, sys_mono = {0};
+    clock_gettime(CLOCK_REALTIME, &sys_rt);
+    clock_gettime(CLOCK_MONOTONIC, &sys_mono);
+
+    c->base_rt_ns   = ts_to_ns(&sys_rt);
+    c->base_mono_ns = ts_to_ns(&sys_mono);
+
+    c->freq_scaled_ppm    = 0;
+    c->pi_freq_ppm        = 0.0;
+    c->pi_int_error_s     = 0.0;
+    c->remaining_phase_ns = 0;
+
+    c->status   = 0; 
+    c->maxerror = 0; 
+    c->esterror = 0; 
+    c->constant = 0; 
+    c->tick     = 0; 
+    c->tai      = 0;
+
+    c->stop_flag           = false;
+    c->poll_thread_running = true;
+
+    // c->pi_servo_enabled: Not reset, we respect the previous state
+}
+
 
 // ================= Background thread =================
 
@@ -355,4 +387,43 @@ static void* swclock_poll_thread_main(void* arg) {
         swclock_poll(c);
     }
     return NULL;
+}
+
+void swclock_enable_PIServo(SwClock* c)
+{
+    if (!c) return;
+
+    if (true != c->pi_servo_enabled) {
+        pthread_mutex_lock(&c->lock);
+        c->pi_servo_enabled = true;
+        swclock_reset(c);
+        pthread_mutex_unlock(&c->lock);
+    }
+}
+
+
+void swclock_disable_PIServo(SwClock* c)
+{
+    if (!c) return;
+
+    if (true == c->pi_servo_enabled) {
+        pthread_mutex_lock(&c->lock);
+        c->pi_servo_enabled = false;
+        // When disabling PI Servo, clear PI state
+        swclock_reset(c);
+        pthread_mutex_unlock(&c->lock);
+    }
+}
+
+
+bool swclock_is_PIServo_enabled(SwClock* c)
+{
+    if (!c) return false;
+    bool is_enabled = true;
+
+    pthread_mutex_lock(&c->lock);
+    is_enabled = c->pi_servo_enabled;
+    pthread_mutex_unlock(&c->lock);
+    
+    return is_enabled;
 }
