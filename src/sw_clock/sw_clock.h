@@ -13,10 +13,13 @@
 extern "C" {
 #endif
 
+#define SWCLOCK_VERSION "v2.0.0"
+
 #include <time.h>
 #include <sys/time.h> // timeval
 #include "sw_clock_constants.h"
 #include "sw_clock_utilities.h"
+#include <stdio.h>
 
 // -------- timex compatibility (for macOS) -------------------
 // Prevent system timex.h from being included to avoid conflicts
@@ -132,6 +135,19 @@ int      swclock_adjtime(SwClock* c, struct timex *tptr);
  * @param c Pointer to SwClock instance
  */
 void     swclock_poll(SwClock* c);
+
+/**
+ * Start logging clock state to a file.
+ * @param c Pointer to SwClock instance
+ * @param filename Name of the log file
+ */
+void     swclock_start_log(SwClock* c, const char* filename);
+
+/**
+ * Close the log file if open.
+ * @param c Pointer to SwClock instance
+ */
+void     swclock_close_log(SwClock* c);
 
 #ifdef __cplusplus
 } // extern "C"

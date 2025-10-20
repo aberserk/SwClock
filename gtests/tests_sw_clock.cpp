@@ -5,6 +5,12 @@
 #include <stdio.h>
 #include <math.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <cstdio>
+#include <cstring>
+#include <cerrno>
+
 
 extern "C" {
 #include "sw_clock.h"
@@ -475,4 +481,54 @@ TEST(SwClockV1, LongTermPIServoStability) {
         EXPECT_LE((double)llabs(extraB), (double)llabs(extraC) + 5e3);
     }
 swclock_destroy(clk);
+}
+
+
+TEST(SwClockV1, TestLogging) {
+    printf("\n[TestLogging] Step 1: Starting test\n");
+    
+    // --- 1. Prepare output filename ---
+    char datetime_buf[64];
+    time_t now = time(NULL);
+    struct tm* tinfo = localtime(&now);
+    strftime(datetime_buf, sizeof(datetime_buf), "%Y%m%d-%H%M%S", tinfo);
+
+    char log_path[256];
+    snprintf(log_path, sizeof(log_path),
+             "logs/%s-SwClockLogs.csv", datetime_buf);
+
+    printf("[TestLogging] Step 2: Creating log at: %s\n", log_path);
+
+    // --- 2. Create clock instance ---
+    printf("[TestLogging] Step 3: Creating SwClock instance\n");
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    printf("[TestLogging] Step 4: SwClock created successfully\n");
+
+    // --- 3. Start logging ---
+    printf("[TestLogging] Step 5: Starting logging\n");
+    swclock_start_log(clk, log_path);
+    printf("[TestLogging] Step 6: Logging started\n");
+
+    // --- 4. Generate some log samples ---
+    printf("[TestLogging] Step 7: Sleeping for 1 second to gather logs\n");
+    sleep(1); // reduced from 5 to 1 second
+    printf("[TestLogging] Step 8: Sleep completed\n");
+
+    // --- 5. Close log and destroy clock ---
+    printf("[TestLogging] Step 9: Closing log\n");
+    swclock_close_log(clk);
+    printf("[TestLogging] Step 10: Destroying SwClock\n");
+    swclock_destroy(clk);
+    printf("[TestLogging] Step 11: SwClock destroyed\n");
+
+    // --- 6. Verify file was created and not empty ---
+    printf("[TestLogging] Step 12: Verifying log file\n");
+    struct stat st;
+    int rc = stat(log_path, &st);
+    ASSERT_EQ(rc, 0) << "Log file was not created: " << strerror(errno);
+    ASSERT_GT(st.st_size, 200) << "Log file seems too small (" << st.st_size << " bytes)";
+
+    printf("[TestLogging] ✅ Log created successfully (%lld bytes)\n",
+           (long long)st.st_size);
 }

@@ -10,12 +10,14 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <inttypes.h> // for PRId64
 
 #include "sw_clock.h"
 
 
 
 // ================= Helpers =================
+void swclock_log(SwClock* c);
 
 static inline double scaledppm_to_ppm(long scaled) {
     return ((double)scaled) / 65536.0;
@@ -56,6 +58,10 @@ struct SwClock {
     pthread_t poll_thread;
     bool      poll_thread_running;
     bool      stop_flag;
+
+    // Logging support
+    FILE* log_fp;         // CSV file handle
+    bool  is_logging;     // true if logging is active
 };
 
 // Forward declaration
@@ -194,10 +200,16 @@ void swclock_destroy(SwClock* c) {
     if (!c) return;
 
     if (c->poll_thread_running) {
+        // First, signal the thread to stop
         pthread_mutex_lock(&c->lock);
         c->stop_flag = true;
         pthread_mutex_unlock(&c->lock);
+        
+        // Wait for thread to exit
         pthread_join(c->poll_thread, NULL);
+        
+        // Now safely close the log
+        swclock_close_log(c);
     }
     
     pthread_mutex_destroy(&c->lock);
@@ -385,6 +397,12 @@ static void* swclock_poll_thread_main(void* arg) {
         if (stop) break;
 
         swclock_poll(c);
+
+        pthread_mutex_lock(&c->lock);
+        if (c->log_fp && c->is_logging) {
+            swclock_log(c);
+        }
+        pthread_mutex_unlock(&c->lock);
     }
     return NULL;
 }
@@ -427,3 +445,105 @@ bool swclock_is_PIServo_enabled(SwClock* c)
     
     return is_enabled;
 }
+
+
+// ================= Logging support =================
+
+void swclock_start_log(SwClock* c, const char* filename) {
+    if (!c || !filename) return;
+
+    pthread_mutex_lock(&c->lock);
+
+    c->log_fp = fopen(filename, "w");
+    if (!c->log_fp) {
+        perror("swclock_start_log: fopen");
+        pthread_mutex_unlock(&c->lock);
+        return;
+    }
+
+    // Get current local date and time
+    time_t now = time(NULL);
+    struct tm* tinfo = localtime(&now);
+    char datetime_buf[64];
+    strftime(datetime_buf, sizeof(datetime_buf), "%Y-%m-%d %H:%M:%S", tinfo);
+
+    // Write header with version and timestamp
+    fprintf(c->log_fp,
+        "# SwClock Log (%s)\n"
+        "# Version: %s\n"
+        "# Started at: %s\n"
+        "# Columns:\n"
+        "timestamp_ns,"
+        "base_rt_ns,"
+        "base_mono_ns,"
+        "freq_scaled_ppm,"
+        "pi_freq_ppm,"
+        "pi_int_error_s,"
+        "remaining_phase_ns,"
+        "pi_servo_enabled,"
+        "maxerror,"
+        "esterror,"
+        "constant,"
+        "tick,"
+        "tai\n",
+        filename,
+        SWCLOCK_VERSION,
+        datetime_buf
+    );
+
+    fflush(c->log_fp);
+    c->is_logging = true;
+
+    pthread_mutex_unlock(&c->lock);
+}
+
+void swclock_log(SwClock* c) {
+    if (!c || !c->is_logging || !c->log_fp) return;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+    long long now_ns = ts_to_ns(&now);
+
+    fprintf(c->log_fp,
+        "%lld,"        // timestamp
+        "%" PRId64 "," // base_rt_ns
+        "%" PRId64 "," // base_mono_ns
+        "%ld,"         // freq_scaled_ppm
+        "%.9f,"        // pi_freq_ppm
+        "%.9f,"        // pi_int_error_s
+        "%lld,"        // remaining_phase_ns
+        "%d,"          // pi_servo_enabled
+        "%ld,"         // maxerror
+        "%ld,"         // esterror
+        "%ld,"         // constant
+        "%ld,"         // tick
+        "%d\n",        // tai
+        now_ns,
+        c->base_rt_ns,
+        c->base_mono_ns,
+        c->freq_scaled_ppm,
+        c->pi_freq_ppm,
+        c->pi_int_error_s,
+        c->remaining_phase_ns,
+        c->pi_servo_enabled ? 1 : 0,
+        c->maxerror,
+        c->esterror,
+        c->constant,
+        c->tick,
+        c->tai);
+
+    fflush(c->log_fp);
+}
+
+void swclock_close_log(SwClock* c) {
+    if (!c) return;
+    pthread_mutex_lock(&c->lock);
+    if (c->log_fp) {
+        fclose(c->log_fp);
+        c->log_fp = NULL;
+    }
+    c->is_logging = false;
+    pthread_mutex_unlock(&c->lock);
+}
+
+
