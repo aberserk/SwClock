@@ -38,8 +38,8 @@ extern "C" {
       unsigned int modes;   // input: which fields to set
       long offset;          // phase offset: usec or nsec (with ADJ_NANO)
       long freq;            // frequency offset, scaled ppm (2^-16 ppm units)
-      long maxerror;        // (unused here)
-      long esterror;        // (unused here)
+      long maxerror;        // maximum error estimate (microseconds)
+      long esterror;        // estimated error (microseconds)
       int  status;          // STA_* bitfield; we store but don't interpret
       long constant;        // (unused here)
       long precision;       // (unused here)
@@ -60,8 +60,8 @@ extern "C" {
   // Modes
   #define ADJ_OFFSET      0x0001 /* phase offset */
   #define ADJ_FREQUENCY   0x0002 /* frequency offset */
-  #define ADJ_MAXERROR    0x0004 /* (unused here) */
-  #define ADJ_ESTERROR    0x0008 /* (unused here) */
+  #define ADJ_MAXERROR    0x0004 /* maximum error estimate */
+  #define ADJ_ESTERROR    0x0008 /* estimated error */
   #define ADJ_STATUS      0x0010 /* (unused here) */
   #define ADJ_TIMECONST   0x0020 /* (unused here) */
   #define ADJ_TAI         0x0080 /* Adjust TAI offset*/

@@ -46,6 +46,11 @@ struct SwClock {
     // Outstanding phase error to slew out (nanoseconds). Sign indicates direction.
     long long remaining_phase_ns;
 
+    // Error tracking for maxerror/esterror computation
+    double    max_observed_phase_error_s;    // maximum phase error seen (seconds)
+    double    accumulated_error_variance;    // accumulated error variance for estimation
+    long long error_samples_count;          // number of error samples collected
+
     // Timex-ish fields
     int     status;
     long    maxerror;
@@ -137,6 +142,39 @@ static void swclock_pi_step(SwClock* c, double dt_s) {
     }
 }
 
+// Update error estimates based on current PI servo state
+static void swclock_update_error_estimates(SwClock* c) {
+    // Current phase error in seconds
+    double current_phase_error_s = fabs((double)c->remaining_phase_ns / 1e9);
+    
+    // Update maximum observed phase error
+    if (current_phase_error_s > c->max_observed_phase_error_s) {
+        c->max_observed_phase_error_s = current_phase_error_s;
+    }
+    
+    // Update accumulated error variance (simple moving average approach)
+    c->error_samples_count++;
+    double alpha = 1.0 / (double)c->error_samples_count;
+    if (c->error_samples_count > 100) alpha = 0.01; // Limit history to ~100 samples
+    
+    double error_contribution = current_phase_error_s * current_phase_error_s;
+    c->accumulated_error_variance = (1.0 - alpha) * c->accumulated_error_variance + alpha * error_contribution;
+    
+    // Calculate maxerror: maximum observed + integral error contribution
+    // Convert to microseconds (Linux convention)
+    double max_error_s = c->max_observed_phase_error_s + fabs(c->pi_int_error_s);
+    c->maxerror = (long)(max_error_s * 1e6);
+    
+    // Calculate esterror: RMS of accumulated variance + PI frequency contribution
+    // Higher PI frequency corrections indicate higher uncertainty
+    double estimated_error_s = sqrt(c->accumulated_error_variance) + 0.1 * fabs(c->pi_freq_ppm) / 1e6;
+    c->esterror = (long)(estimated_error_s * 1e6);
+    
+    // Ensure reasonable bounds (max 1 second error estimates)
+    if (c->maxerror > 1000000) c->maxerror = 1000000;
+    if (c->esterror > 1000000) c->esterror = 1000000;
+}
+
 // Public poll: advance to now, then do one PI update based on elapsed dt.
 void swclock_poll(SwClock* c) {
     if (!c) return;
@@ -152,6 +190,9 @@ void swclock_poll(SwClock* c) {
     if (c->pi_servo_enabled) {
         swclock_pi_step(c, dt_s);
     }
+
+    // Update error estimates based on current state
+    swclock_update_error_estimates(c);
 
     pthread_mutex_unlock(&c->lock);
 }
@@ -178,6 +219,11 @@ SwClock* swclock_create(void) {
     c->pi_int_error_s     = 0.0;
     c->pi_servo_enabled   = true;
     c->remaining_phase_ns = 0;
+
+    // Initialize error tracking
+    c->max_observed_phase_error_s = 0.0;
+    c->accumulated_error_variance = 0.0;
+    c->error_samples_count       = 0;
 
     c->status   = 0; 
     c->maxerror = 0; 

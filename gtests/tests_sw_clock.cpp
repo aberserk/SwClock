@@ -560,10 +560,10 @@ TEST(SwClockV1, TestLoggingWithAdjTime) {
     printf("[TestLoggingWithAdjTime] Step 6: Logging started\n");
 
     // --- 4. Apply a slewed offset to activate PI servo ---
-    printf("[TestLoggingWithAdjTime] Step 7: Applying +50ms slewed offset\n");
+    printf("[TestLoggingWithAdjTime] Step 7: Applying +1ms slewed offset\n");
     struct timex tx = {};
     tx.modes  = ADJ_OFFSET | ADJ_MICRO;  // slew mode (not immediate step)
-    tx.offset = 50000;                   // +50 ms in microseconds
+    tx.offset = 1000;                   // +1 ms in microseconds
     swclock_adjtime(clk, &tx);
     printf("[TestLoggingWithAdjTime] Step 8: Offset applied, PI servo should be active\n");
 
@@ -582,20 +582,20 @@ TEST(SwClockV1, TestLoggingWithAdjTime) {
 
     // --- 7. Observe frequency adjustment behavior ---
     printf("[TestLoggingWithAdjTime] Step 13: Observing frequency adjustment for 3 seconds\n");
-    sleep(3);
+    sleep(5);
     printf("[TestLoggingWithAdjTime] Step 14: Frequency adjustment observation completed\n");
 
     // --- 8. Apply another offset in opposite direction ---
-    printf("[TestLoggingWithAdjTime] Step 15: Applying -30ms slewed offset\n");
+    printf("[TestLoggingWithAdjTime] Step 15: Applying -1ms slewed offset\n");
     struct timex tx3 = {};
     tx3.modes  = ADJ_OFFSET | ADJ_MICRO;
-    tx3.offset = -30000;                 // -30 ms
+    tx3.offset = -1000;                 // -1 ms
     swclock_adjtime(clk, &tx3);
     printf("[TestLoggingWithAdjTime] Step 16: Negative offset applied\n");
 
     // --- 9. Final observation period ---
     printf("[TestLoggingWithAdjTime] Step 17: Final PI servo observation for 3 seconds\n");
-    sleep(3);
+    sleep(5);
     printf("[TestLoggingWithAdjTime] Step 18: All adjustments and observations completed\n");
 
     // --- 10. Close log and destroy clock ---

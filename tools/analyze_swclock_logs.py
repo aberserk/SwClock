@@ -196,14 +196,20 @@ def plot_system_parameters(df):
     """Plot system-level parameters."""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    # Error estimates
-    ax1.plot(df['time_s'], df['maxerror'], 'r-', label='maxerror', linewidth=2)
-    ax1.plot(df['time_s'], df['esterror'], 'b-', label='esterror', linewidth=2)
+    # Error estimates - convert from microseconds to milliseconds for readability
+    # SwClock outputs maxerror/esterror in microseconds (Linux convention)
+    # Convert to milliseconds for better readability on plots
+    maxerror_ms = df['maxerror'] / 1000.0  # Convert μs to ms
+    esterror_ms = df['esterror'] / 1000.0  # Convert μs to ms
+    
+    ax1.plot(df['time_s'], maxerror_ms, 'r-', label='maxerror', linewidth=2)
+    ax1.plot(df['time_s'], esterror_ms, 'b-', label='esterror', linewidth=2)
     ax1.set_xlabel('Time (seconds)')
-    ax1.set_ylabel('Error (units)')
-    ax1.set_title('System Error Estimates')
+    ax1.set_ylabel('Error (milliseconds)')
+    ax1.set_title('System Error Estimates (Absolute Time Error)')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
+    ax1.set_ylim(bottom=0)  # Start y-axis at 0 for better readability
     
     # Other parameters
     ax2.plot(df['time_s'], df['constant'], 'g-', label='constant', linewidth=2)
@@ -242,9 +248,13 @@ def print_statistics(df):
     print(f"  Remaining Phase: min={df['remaining_phase_ns'].min():.0f} ns, max={df['remaining_phase_ns'].max():.0f} ns")
     
     print(f"\nSystem Parameters:")
-    print(f"  Max Error: min={df['maxerror'].min()}, max={df['maxerror'].max()}")
-    print(f"  Est Error: min={df['esterror'].min()}, max={df['esterror'].max()}")
+    print(f"  Max Error: min={df['maxerror'].min():.1f} μs, max={df['maxerror'].max():.1f} μs")
+    print(f"  Est Error: min={df['esterror'].min():.1f} μs, max={df['esterror'].max():.1f} μs")
     print(f"  TAI Offset: {df['tai'].iloc[0]}")
+    print(f"\nError Interpretation:")
+    print(f"  Max Error represents maximum observed timing error + accumulated drift")
+    print(f"  Est Error represents current uncertainty estimate based on PI servo activity")
+    print(f"  Values in microseconds: SwClock outputs follow Linux adjtimex() convention")
 
 def main():
     """Main analysis function."""
