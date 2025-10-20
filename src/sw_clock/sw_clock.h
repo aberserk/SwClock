@@ -149,6 +149,12 @@ void     swclock_start_log(SwClock* c, const char* filename);
  */
 void     swclock_close_log(SwClock* c);
 
+/*
+ * Disable the PI servo control loop.
+ * @param c Pointer to SwClock instance
+ */
+void     swclock_disable_pi_servo(SwClock* c);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

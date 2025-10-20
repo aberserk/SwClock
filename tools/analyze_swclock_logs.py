@@ -68,12 +68,12 @@ def find_latest_log():
     # Navigate to the logs directory relative to the script
     logs_dir = script_dir.parent / "logs"
     
-    # Look for any CSV files that contain "SwClock" in the name
-    log_pattern = str(logs_dir / "*SwClock*.csv")
+    # Look for any CSV files (SwClock logs can have various naming patterns)
+    log_pattern = str(logs_dir / "*.csv")
     log_files = glob.glob(log_pattern)
     
     if not log_files:
-        raise FileNotFoundError(f"No SwClock log files found in {logs_dir}/ directory")
+        raise FileNotFoundError(f"No CSV log files found in {logs_dir}/ directory")
     
     # Sort by modification time, most recent first
     log_files.sort(key=os.path.getmtime, reverse=True)

@@ -32,8 +32,8 @@ struct SwClock {
     struct timespec ref_mono_raw;
 
     // Software clock bases at reference
-    int64_t base_rt_ns;    // REALTIME
-    int64_t base_mono_ns;  // MONOTONIC
+    int64_t base_rt_ns;        // REALTIME
+    int64_t base_mono_ns;      // disciplined synthetic timebase
 
     // Base frequency bias set by ADJ_FREQUENCY (scaled-ppm)
     long    freq_scaled_ppm;
@@ -52,12 +52,12 @@ struct SwClock {
     long long error_samples_count;          // number of error samples collected
 
     // Timex-ish fields
-    int     status;
-    long    maxerror;
-    long    esterror;
-    long    constant;
-    long    tick;
-    int     tai;
+    int     status;   // status word
+    long    maxerror; // maximum error (nanoseconds)
+    long    esterror; // estimated error (nanoseconds)
+    long    constant; // constant (nanoseconds)
+    long    tick;     // tick (nanoseconds)
+    int     tai;      // TAI offset (seconds)
 
     // Background poll thread
     pthread_t poll_thread;
@@ -116,9 +116,22 @@ static void swclock_rebase_now_and_update(SwClock* c) {
 }
 
 
+void swclock_disable_pi_servo(SwClock* c)
+{
+    if (!c) return;
+    pthread_mutex_lock(&c->lock);
+    c->pi_servo_enabled = false;
+    pthread_mutex_unlock(&c->lock);
+}
 
 // One PI control step. dt_s is the elapsed RAW time since last poll in seconds.
 static void swclock_pi_step(SwClock* c, double dt_s) {
+
+    if (c->pi_servo_enabled == false) {
+        // PI servo is disabled; do nothing
+        return;
+    }
+
     // Error is the remaining phase (seconds). Positive error => need faster time (positive ppm).
     double err_s = (double)c->remaining_phase_ns / 1e9;
 
@@ -139,6 +152,7 @@ static void swclock_pi_step(SwClock* c, double dt_s) {
         c->remaining_phase_ns = 0;
         c->pi_int_error_s     = 0.0;
         c->pi_freq_ppm        = 0.0;
+        c->max_observed_phase_error_s *= 0.0; 
     }
 }
 
@@ -207,12 +221,12 @@ SwClock* swclock_create(void) {
 
     clock_gettime(CLOCK_MONOTONIC_RAW, &c->ref_mono_raw);
 
-    struct timespec sys_rt = {0}, sys_mono = {0};
+    struct timespec sys_rt = {0}, sys_mono_raw = {0};
     clock_gettime(CLOCK_REALTIME, &sys_rt);
-    clock_gettime(CLOCK_MONOTONIC, &sys_mono);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &sys_mono_raw);
 
     c->base_rt_ns   = ts_to_ns(&sys_rt);
-    c->base_mono_ns = ts_to_ns(&sys_mono);
+    c->base_mono_ns = ts_to_ns(&sys_mono_raw);
 
     c->freq_scaled_ppm    = 0;
     c->pi_freq_ppm        = 0.0;
@@ -269,7 +283,7 @@ int swclock_gettime(SwClock* c, clockid_t clk_id, struct timespec *tp) {
     { 
         errno = EINVAL; 
         return -1;
- }
+    }
 
     if (clk_id == CLOCK_MONOTONIC_RAW) {
         return clock_gettime(CLOCK_MONOTONIC_RAW, tp);
@@ -334,6 +348,8 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
             delta_ns = (long long)tptr->offset * 1000LL; // usec -> ns
         }
         c->remaining_phase_ns += delta_ns;               // PI will work this down
+        c->pi_int_error_s = 0.0;
+        c->pi_freq_ppm    = 0.0;
     }
 
     /* ADJ_SETOFFSET: RELATIVE STEP (immediate)
@@ -401,12 +417,12 @@ void swclock_reset(SwClock* c) {
 
     clock_gettime(CLOCK_MONOTONIC_RAW, &c->ref_mono_raw);
 
-    struct timespec sys_rt = {0}, sys_mono = {0};
+    struct timespec sys_rt = {0}, sys_mono_raw = {0};
     clock_gettime(CLOCK_REALTIME, &sys_rt);
-    clock_gettime(CLOCK_MONOTONIC, &sys_mono);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &sys_mono_raw);
 
     c->base_rt_ns   = ts_to_ns(&sys_rt);
-    c->base_mono_ns = ts_to_ns(&sys_mono);
+    c->base_mono_ns = ts_to_ns(&sys_mono_raw);
 
     c->freq_scaled_ppm    = 0;
     c->pi_freq_ppm        = 0.0;
@@ -460,7 +476,8 @@ void swclock_enable_PIServo(SwClock* c)
     if (true != c->pi_servo_enabled) {
         pthread_mutex_lock(&c->lock);
         c->pi_servo_enabled = true;
-        swclock_reset(c);
+        c->pi_int_error_s   = 0.0;
+        c->pi_freq_ppm      = 0.0;
         pthread_mutex_unlock(&c->lock);
     }
 }
@@ -473,8 +490,8 @@ void swclock_disable_PIServo(SwClock* c)
     if (true == c->pi_servo_enabled) {
         pthread_mutex_lock(&c->lock);
         c->pi_servo_enabled = false;
-        // When disabling PI Servo, clear PI state
-        swclock_reset(c);
+        c->pi_int_error_s   = 0.0;
+        c->pi_freq_ppm      = 0.0;
         pthread_mutex_unlock(&c->lock);
     }
 }

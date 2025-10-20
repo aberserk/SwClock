@@ -239,3 +239,80 @@ swclock_adjtime(clk, &tx);
 - D. Mills, *Network Time Protocol Reference Implementation*
 - ITU-T G.810 / G.8260 — Stability and wander metrics for timing systems
 
+----
+
+## 🕒 `swclock_gettime()` Semantics and Comparison to Linux `clock_gettime()`
+
+## 1. Overview
+
+This document explains the behavior and rationale of `swclock_gettime()` in the **SwClock** subsystem and compares it with the Linux kernel’s native `clock_gettime()` semantics.  
+It clarifies how each clock domain (`REALTIME`, `MONOTONIC`, and `MONOTONIC_RAW`) is defined, disciplined, and expected to differ.
+
+---
+
+## 2. The Three Clock Domains
+
+### 2.1. In Linux
+
+Linux exposes multiple clock domains via `clock_gettime()`:
+
+| Clock ID | Adjusted by `adjtime()` / NTP / PTP? | Represents | Description |
+|-----------|--------------------------------------|-------------|--------------|
+| **`CLOCK_REALTIME`** | ✅ Yes | Civil (UTC) time | Steps and slews under NTP or PTP. Can jump forward/backward. |
+| **`CLOCK_MONOTONIC`** | ✅ Yes (frequency only) | Elapsed time since boot | Never jumps, but can slew rate (ppm) when the system clock is disciplined. |
+| **`CLOCK_MONOTONIC_RAW`** | ❌ No | Hardware tick time | Raw, unadjusted hardware counter. Never disciplined. Pure frequency base. |
+
+The relationship between `MONOTONIC` and `MONOTONIC_RAW` is:
+
+\[
+t_{\text{MONO}}(t) = t_{\text{RAW}}(t) + \int_0^t f_{\text{corr}}(\tau)\, d\tau
+\]
+
+where \(fcorr(t)f_{\text{corr}}(t)\) is the instantaneous frequency correction (in fractional units, ppm/1e6) applied by NTP/PTP discipline.
+
+This means:
+- Both clocks start from the same epoch (boot).
+- `MONOTONIC` runs slightly faster or slower depending on the correction applied.
+- The **difference** between them accumulates over time, representing the applied frequency correction.
+
+---
+
+### 2.2. In SwClock
+
+`swclock_gettime()` reproduces the same structure **in user space**.  
+
+| Clock ID | Equivalent Behavior | Disciplined By | Description |
+|-----------|---------------------|----------------|--------------|
+| **`CLOCK_REALTIME`** | Synthetic UTC wall clock | PI controller | Slewed or stepped by `swclock_adjtime()`. |
+| **`CLOCK_MONOTONIC`** | Synthetic disciplined elapsed time | PI controller | Advanced using the same PI frequency correction applied to `REALTIME`. |
+| **`CLOCK_MONOTONIC_RAW`** | Kernel passthrough | None | Direct call to `clock_gettime(CLOCK_MONOTONIC_RAW)`. Raw hardware counter. |
+
+Thus:
+- `CLOCK_MONOTONIC_RAW` → serves as the **reference** (uncontrolled).  
+- `CLOCK_MONOTONIC` → reflects **SwClock’s discipline action**.  
+- `CLOCK_REALTIME` → aligns to civil time through `adjtime`/`settime` operations.
+
+---
+
+## 3. Why `CLOCK_MONOTONIC` ≠ `CLOCK_MONOTONIC_RAW`
+
+They differ intentionally.  
+This difference encodes the servo’s *correction action* — it represents how much SwClock is slewing its internal rate relative to the raw reference.
+
+When `swclock_poll()` runs, it advances internal time as:
+
+\[
+\text{adj\_elapsed}_{ns} = \text{elapsed\_raw}_{ns} \times \Big(1 + \frac{f_{\text{base}} + f_{\text{PI}}}{10^6}\Big)
+\]
+
+where:
+- \(fbasef_{\text{base}}\) = static frequency offset (`freq_scaled_ppm`),
+- \(fPIf_{\text{PI}}\) = dynamic correction produced by the PI loop.
+
+Both `base_rt_ns` and `base_mono_ns` are updated using this **total factor**:
+
+```c
+total_factor = 1.0 + (base_ppm + pi_freq_ppm) / 1e6;
+adj_elapsed_ns = elapsed_raw_ns * total_factor;
+
+```
