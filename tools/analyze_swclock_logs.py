@@ -67,7 +67,9 @@ def find_latest_log():
     script_dir = Path(__file__).parent
     # Navigate to the logs directory relative to the script
     logs_dir = script_dir.parent / "logs"
-    log_pattern = str(logs_dir / "*-SwClockLogs.csv")
+    
+    # Look for any CSV files that contain "SwClock" in the name
+    log_pattern = str(logs_dir / "*SwClock*.csv")
     log_files = glob.glob(log_pattern)
     
     if not log_files:

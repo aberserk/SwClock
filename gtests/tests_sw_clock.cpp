@@ -532,3 +532,91 @@ TEST(SwClockV1, TestLogging) {
     printf("[TestLogging] ✅ Log created successfully (%lld bytes)\n",
            (long long)st.st_size);
 }
+
+TEST(SwClockV1, TestLoggingWithAdjTime) {
+    printf("\n[TestLoggingWithAdjTime] Step 1: Starting test with time adjustments\n");
+    
+    // --- 1. Prepare output filename ---
+    char datetime_buf[64];
+    time_t now = time(NULL);
+    struct tm* tinfo = localtime(&now);
+    strftime(datetime_buf, sizeof(datetime_buf), "%Y%m%d-%H%M%S", tinfo);
+
+    char log_path[256];
+    snprintf(log_path, sizeof(log_path),
+             "logs/%s-SwClockLogsWithAdj.csv", datetime_buf);
+
+    printf("[TestLoggingWithAdjTime] Step 2: Creating log at: %s\n", log_path);
+
+    // --- 2. Create clock instance ---
+    printf("[TestLoggingWithAdjTime] Step 3: Creating SwClock instance\n");
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    printf("[TestLoggingWithAdjTime] Step 4: SwClock created successfully\n");
+
+    // --- 3. Start logging ---
+    printf("[TestLoggingWithAdjTime] Step 5: Starting logging\n");
+    swclock_start_log(clk, log_path);
+    printf("[TestLoggingWithAdjTime] Step 6: Logging started\n");
+
+    // --- 4. Apply a slewed offset to activate PI servo ---
+    printf("[TestLoggingWithAdjTime] Step 7: Applying +50ms slewed offset\n");
+    struct timex tx = {};
+    tx.modes  = ADJ_OFFSET | ADJ_MICRO;  // slew mode (not immediate step)
+    tx.offset = 50000;                   // +50 ms in microseconds
+    swclock_adjtime(clk, &tx);
+    printf("[TestLoggingWithAdjTime] Step 8: Offset applied, PI servo should be active\n");
+
+    // --- 5. Let PI servo work for several seconds ---
+    printf("[TestLoggingWithAdjTime] Step 9: Letting PI servo work for 5 seconds\n");
+    sleep(5); 
+    printf("[TestLoggingWithAdjTime] Step 10: PI servo observation period completed\n");
+
+    // --- 6. Apply frequency adjustment to see different behavior ---
+    printf("[TestLoggingWithAdjTime] Step 11: Applying frequency adjustment (+100 ppm)\n");
+    struct timex tx2 = {};
+    tx2.modes = ADJ_FREQUENCY;
+    tx2.freq  = (int)(100.0 * 65536.0);  // +100 ppm
+    swclock_adjtime(clk, &tx2);
+    printf("[TestLoggingWithAdjTime] Step 12: Frequency adjustment applied\n");
+
+    // --- 7. Observe frequency adjustment behavior ---
+    printf("[TestLoggingWithAdjTime] Step 13: Observing frequency adjustment for 3 seconds\n");
+    sleep(3);
+    printf("[TestLoggingWithAdjTime] Step 14: Frequency adjustment observation completed\n");
+
+    // --- 8. Apply another offset in opposite direction ---
+    printf("[TestLoggingWithAdjTime] Step 15: Applying -30ms slewed offset\n");
+    struct timex tx3 = {};
+    tx3.modes  = ADJ_OFFSET | ADJ_MICRO;
+    tx3.offset = -30000;                 // -30 ms
+    swclock_adjtime(clk, &tx3);
+    printf("[TestLoggingWithAdjTime] Step 16: Negative offset applied\n");
+
+    // --- 9. Final observation period ---
+    printf("[TestLoggingWithAdjTime] Step 17: Final PI servo observation for 3 seconds\n");
+    sleep(3);
+    printf("[TestLoggingWithAdjTime] Step 18: All adjustments and observations completed\n");
+
+    // --- 10. Close log and destroy clock ---
+    printf("[TestLoggingWithAdjTime] Step 19: Closing log\n");
+    swclock_close_log(clk);
+    printf("[TestLoggingWithAdjTime] Step 20: Destroying SwClock\n");
+    swclock_destroy(clk);
+    printf("[TestLoggingWithAdjTime] Step 21: SwClock destroyed\n");
+
+    // --- 11. Verify file was created and not empty ---
+    printf("[TestLoggingWithAdjTime] Step 22: Verifying log file\n");
+    struct stat st;
+    int rc = stat(log_path, &st);
+    ASSERT_EQ(rc, 0) << "Log file was not created: " << strerror(errno);
+    ASSERT_GT(st.st_size, 1000) << "Log file seems too small (" << st.st_size << " bytes)";
+
+    printf("[TestLoggingWithAdjTime] ✅ Log with PI servo activity created successfully (%lld bytes)\n",
+           (long long)st.st_size);
+    printf("[TestLoggingWithAdjTime] 📊 This log should show:\n");
+    printf("  - Non-zero remaining_phase_ns during slew corrections\n");
+    printf("  - Non-zero pi_int_error_s as integral accumulates\n");
+    printf("  - Non-zero pi_freq_ppm as PI servo generates corrections\n");
+    printf("  - Non-zero freq_scaled_ppm from frequency adjustments\n");
+}
