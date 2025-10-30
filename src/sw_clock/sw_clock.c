@@ -462,7 +462,7 @@ static void* swclock_poll_thread_main(void* arg) {
 
         pthread_mutex_lock(&c->lock);
         if (c->log_fp && c->is_logging) {
-            swclock_log(c);
+            //swclock_log(c);
         }
         pthread_mutex_unlock(&c->lock);
     }
