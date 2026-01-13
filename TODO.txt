@@ -124,10 +124,10 @@ HIGH (P3-P4): ✅ COMPLETE
      - [ ] Document metrics thresholds
 
 MEDIUM (P5-P6):
-  [ ] P5: Extended Test Scenarios
-     - [ ] Add frequency offset tests
-     - [ ] Add multiple step size tests
-     - [ ] Extended holdover test
+  ✅ P5: Extended Test Scenarios - COMPLETE
+     ✅ Add frequency offset tests - DONE (FrequencyOffsetPositive, FrequencyOffsetNegative)
+     ✅ Add multiple step size tests - DONE (MultipleStepSizes: 0.1ms to 100ms)
+     🟡 Extended holdover test - DEFERRED (existing 30s HoldoverDrift test adequate)
   
   [ ] P6: Data Collection Improvements
      - [ ] Add CSV export option to tests

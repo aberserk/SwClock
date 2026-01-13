@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cerrno>
+#include <cstring>
+#include <sys/stat.h>
 
 #include "sw_clock.h"
 
@@ -79,6 +81,86 @@
 #ifndef PERF_POLL_NS
 #define PERF_POLL_NS (100*1000*1000LL) // 100 ms
 #endif
+
+// CSV export helper functions
+// Check if CSV logging is enabled via environment variable
+static inline bool csv_logging_enabled() {
+  const char* env = getenv("SWCLOCK_PERF_CSV");
+  return (env != nullptr && (strcmp(env, "1") == 0 || strcasecmp(env, "true") == 0));
+}
+
+// Get log directory from environment or use default
+static inline const char* get_log_dir() {
+  const char* dir = getenv("SWCLOCK_LOG_DIR");
+  return (dir && *dir) ? dir : "logs";
+}
+
+// Create log directory if it doesn't exist
+static inline void ensure_log_dir() {
+  const char* dir = get_log_dir();
+  struct stat st;
+  if (stat(dir, &st) == -1) {
+    mkdir(dir, 0755);
+  }
+}
+
+// Generate CSV filename for a test
+static inline void get_csv_filename(char* buf, size_t bufsize, const char* test_name) {
+  ensure_log_dir();
+  time_t now = time(NULL);
+  struct tm* tinfo = localtime(&now);
+  char datetime_buf[64];
+  strftime(datetime_buf, sizeof(datetime_buf), "%Y%m%d-%H%M%S", tinfo);
+  snprintf(buf, bufsize, "%s/%s-%s.csv", get_log_dir(), datetime_buf, test_name);
+}
+
+// CSV logger for TE time series data
+class TELogger {
+private:
+  FILE* fp;
+  bool enabled;
+  
+public:
+  TELogger(const char* test_name) : fp(nullptr), enabled(csv_logging_enabled()) {
+    if (!enabled) return;
+    
+    char filename[512];
+    get_csv_filename(filename, sizeof(filename), test_name);
+    
+    fp = fopen(filename, "w");
+    if (!fp) {
+      perror("TELogger: fopen");
+      enabled = false;
+      return;
+    }
+    
+    // Write CSV header
+    fprintf(fp, "# Performance Test CSV Export\n");
+    fprintf(fp, "# Test: %s\n", test_name);
+    fprintf(fp, "# Columns: timestamp_ns, te_ns\n");
+    fprintf(fp, "timestamp_ns,te_ns\n");
+    fflush(fp);
+    
+    printf("  CSV logging to: %s\n", filename);
+  }
+  
+  ~TELogger() {
+    if (fp) {
+      fclose(fp);
+    }
+  }
+  
+  void log(long long timestamp_ns, long long te_ns) {
+    if (!enabled || !fp) return;
+    fprintf(fp, "%lld,%lld\n", timestamp_ns, te_ns);
+  }
+  
+  void flush() {
+    if (fp) fflush(fp);
+  }
+  
+  bool is_enabled() const { return enabled; }
+};
 
 
 static inline void sleep_ns_robust(long long ns){
@@ -150,10 +232,14 @@ TEST(Perf, DisciplineTEStats_MTIE_TDEV){
   SwClock* clk = swclock_create();
   ASSERT_NE(clk, nullptr);
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_DisciplineTEStats_MTIE_TDEV");
+
   // Capture references
   struct timespec sw0, raw0;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &raw0);
+  long long t0_ns = ts_to_ns(&raw0);
 
   // Sample 60 s @ 10 Hz
   const double sample_dt_s = 0.1;
@@ -165,13 +251,23 @@ TEST(Perf, DisciplineTEStats_MTIE_TDEV){
 
   printf("\n=== Discipline loop: TE/MTIE/TDEV vs MONOTONIC_RAW reference ===\n");
   for (int i=0;i<=SAMPLES;i++){
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    
     long long te = TE_now_SWvsRAW(clk, sw0, raw0);
     te_ns.push_back(te);
+    
+    // Log to CSV if enabled
+    csv_logger.log(timestamp_ns, te);
+    
     if (i % 60 == 0) { // print ~every 6 s
       printf("  TE[%d] = %10.3f us\n", i, (double)te / 1000.0);
     }
     sleep_ns_robust(POLL_NS);
   }
+  
+  csv_logger.flush();
 
   // Detrend
   double a=0,b=0;
@@ -247,10 +343,14 @@ TEST(Perf, SettlingAndOvershoot){
   ASSERT_NE(clk, nullptr);
   printf("\n=== Settling & Overshoot (IMMEDIATE step +1 ms, RELATIVE TE) ===\n");
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_SettlingAndOvershoot");
+
   // Reference
   struct timespec sw0, raw0;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &raw0);
+  long long t0_ns = ts_to_ns(&raw0);
 
   auto TE_now = [&](void)->long long{
     struct timespec sw, rr;
@@ -283,9 +383,17 @@ TEST(Perf, SettlingAndOvershoot){
 
   for (;;){
     sleep_ns_robust(POLL_NS);
+    
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    
     long long te = TE_now();
     long long e_rel_ns = te - TE0; // RELATIVE error w.r.t immediate step value
     double e_rel_us = (double)e_rel_ns / 1000.0;
+
+    // Log to CSV if enabled
+    csv_logger.log(timestamp_ns, te);
 
     if (fmod(t, 1.0) < POLL_S) {
       printf("  t=%5.2fs  TE=%+8.3f us  (rel=%+7.3f us)\n", t, (double)te/1000.0, e_rel_us);
@@ -305,6 +413,8 @@ TEST(Perf, SettlingAndOvershoot){
     t += POLL_S;
     if (t > TIMEOUT_S) break;
   }
+
+  csv_logger.flush();
 
   double settle_time = settled ? t : INFINITY;
   double overshoot_ns = (double)llabs(min_below_zero_rel_ns);
