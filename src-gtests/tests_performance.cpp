@@ -448,6 +448,9 @@ TEST(Perf, SlewRateClamp) {
 
   printf("\n=== Slew-rate command/clamp check (+%.0f ms) ===\n", SLEW_TEST_OFFSET_MS);
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_SlewRateClamp");
+
   struct timex tx = {};
   tx.modes  = ADJ_OFFSET | ADJ_MICRO;
   tx.offset = (int)llround(SLEW_TEST_OFFSET_MS * 1000.0);
@@ -456,10 +459,21 @@ TEST(Perf, SlewRateClamp) {
   struct timespec sw0, mr0, sw1, mr1;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &mr0);
+  long long t0_ns = ts_to_ns(&mr0);
 
   const double WIN_S = 3.0;
-  sleep_ns((long long)llround(WIN_S * NS_PER_SEC));
-
+  
+  // Sample TE during slew window
+  for (double t = 0; t <= WIN_S; t += 0.1) {
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    long long te = TE_now_SWvsRAW(clk, sw0, mr0);
+    csv_logger.log(timestamp_ns, te);
+    if (t < WIN_S) sleep_ns((long long)(0.1 * NS_PER_SEC));
+  }
+  csv_logger.flush();
+  
   swclock_gettime(clk, CLOCK_REALTIME, &sw1);
   clock_gettime(CLOCK_MONOTONIC_RAW, &mr1);
 
@@ -494,10 +508,24 @@ TEST(Perf, HoldoverDrift) {
 
   printf("\n=== Holdover drift (no corrections for %ds) ===\n", HOLDOVER_S);
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_HoldoverDrift");
+
   struct timespec sw0, rt0, sw1, rt1;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
-  sleep_ns((long long)HOLDOVER_S * NS_PER_SEC);
+  long long t0_ns = ts_to_ns(&rt0);
+  
+  // Sample TE during holdover period
+  for (int i = 0; i <= HOLDOVER_S; i++) {
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    long long te = TE_now_SWvsRAW(clk, sw0, rt0);
+    csv_logger.log(timestamp_ns, te);
+    if (i < HOLDOVER_S) sleep_ns(NS_PER_SEC);
+  }
+  csv_logger.flush();
   swclock_gettime(clk, CLOCK_REALTIME, &sw1);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
 
@@ -538,6 +566,9 @@ TEST(Perf, FrequencyOffsetPositive) {
 
   printf("\n=== Frequency Offset Stability: +%.1f ppm ===\n", FREQ_OFFSET_PPM);
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_FrequencyOffsetPositive");
+
   // Apply initial frequency offset
   struct timex tx = {};
   tx.modes = ADJ_FREQUENCY;
@@ -551,8 +582,18 @@ TEST(Perf, FrequencyOffsetPositive) {
   struct timespec sw0, rt0, sw1, rt1;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
+  long long t0_ns = ts_to_ns(&rt0);
   
-  sleep_ns((long long)(MEASURE_TIME_S * NS_PER_SEC));
+  // Sample TE during measurement window
+  for (double t = 0; t <= MEASURE_TIME_S; t += 1.0) {
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    long long te = TE_now_SWvsRAW(clk, sw0, rt0);
+    csv_logger.log(timestamp_ns, te);
+    if (t < MEASURE_TIME_S) sleep_ns(NS_PER_SEC);
+  }
+  csv_logger.flush();
   
   swclock_gettime(clk, CLOCK_REALTIME, &sw1);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
@@ -581,6 +622,9 @@ TEST(Perf, FrequencyOffsetNegative) {
   SwClock* clk = swclock_create();
   ASSERT_NE(clk, nullptr);
 
+  // Initialize CSV logger
+  TELogger csv_logger("Perf_FrequencyOffsetNegative");
+
   const double FREQ_OFFSET_PPM = -100.0;  // -100 ppm initial offset
   const double MAX_DRIFT_PPM = 1.0;       // Drift should be minimal
   const double MEASURE_TIME_S = 10.0;     // Measurement window
@@ -600,8 +644,18 @@ TEST(Perf, FrequencyOffsetNegative) {
   struct timespec sw0, rt0, sw1, rt1;
   swclock_gettime(clk, CLOCK_REALTIME, &sw0);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
+  long long t0_ns = ts_to_ns(&rt0);
   
-  sleep_ns((long long)(MEASURE_TIME_S * NS_PER_SEC));
+  // Sample TE during measurement window
+  for (double t = 0; t <= MEASURE_TIME_S; t += 1.0) {
+    struct timespec raw_now;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+    long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+    long long te = TE_now_SWvsRAW(clk, sw0, rt0);
+    csv_logger.log(timestamp_ns, te);
+    if (t < MEASURE_TIME_S) sleep_ns(NS_PER_SEC);
+  }
+  csv_logger.flush();
   
   swclock_gettime(clk, CLOCK_REALTIME, &sw1);
   clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
@@ -652,6 +706,11 @@ TEST(Perf, MultipleStepSizes) {
 
     printf("\n  Step: %.3f ms\n", test.step_ms);
 
+    // Initialize CSV logger for this step size
+    char test_name[128];
+    snprintf(test_name, sizeof(test_name), "Perf_MultipleStepSizes_%.1fms", test.step_ms);
+    TELogger csv_logger(test_name);
+
     // Apply step offset
     struct timex tx = {};
     tx.modes = ADJ_SETOFFSET | ADJ_NANO;
@@ -664,6 +723,7 @@ TEST(Perf, MultipleStepSizes) {
     struct timespec sw_ref, rt_ref;
     swclock_gettime(clk, CLOCK_REALTIME, &sw_ref);
     clock_gettime(CLOCK_MONOTONIC_RAW, &rt_ref);
+    long long t0_ns = ts_to_ns(&rt_ref);
 
     long long max_te = 0;
     double settling_time = -1.0;
@@ -673,13 +733,21 @@ TEST(Perf, MultipleStepSizes) {
     for (double t = 0.1; t < MAX_TEST_TIME_S; t += 0.1) {
       sleep_ns((long long)(0.1 * NS_PER_SEC));
       
+      struct timespec raw_now;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+      long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
+      
       long long te = TE_now_SWvsRAW(clk, sw_ref, rt_ref);
+      csv_logger.log(timestamp_ns, te);
+      
       if (std::abs(te) > max_te) max_te = std::abs(te);
       
       if (settling_time < 0 && std::abs(te) <= SETTLE_THRESHOLD_NS) {
         settling_time = t;
       }
     }
+    
+    csv_logger.flush();
 
     double overshoot_pct = (max_te / (offset_ns)) * 100.0;
 
