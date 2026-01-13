@@ -129,9 +129,12 @@ MEDIUM (P5-P6):
      ✅ Add multiple step size tests - DONE (MultipleStepSizes: 0.1ms to 100ms)
      🟡 Extended holdover test - DEFERRED (existing 30s HoldoverDrift test adequate)
   
-  [ ] P6: Data Collection Improvements
-     - [ ] Add CSV export option to tests
-     - [ ] Make tests configurable via environment variables
+  ✅ P6: Data Collection Improvements - COMPLETE
+     ✅ Add CSV export option to tests - DONE (SWCLOCK_PERF_CSV=1)
+     ✅ Make tests configurable via environment variables - DONE (SWCLOCK_LOG_DIR, SWCLOCK_PERF_CSV)
+     ✅ CSV format: timestamp_ns, te_ns
+     ✅ Created read_performance_csv.py for plotting
+     ✅ All 7 tests export TE time series data
 
 LOW (P7-P10):
   [ ] P7: Allan Deviation
