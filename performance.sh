@@ -41,6 +41,7 @@ OUTPUT_BASE_DIR="performance"
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 OUTPUT_DIR="${OUTPUT_BASE_DIR}/performance_${TIMESTAMP}"
 NO_CACHE=false
+PARALLEL_JOBS=1  # Default: sequential execution
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -71,6 +72,14 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE=true
             shift
             ;;
+        --parallel=*)
+            PARALLEL_JOBS="${1#*=}"
+            shift
+            ;;
+        --parallel)
+            PARALLEL_JOBS=2  # Default to 2 parallel jobs
+            shift
+            ;;
         --help)
             echo "SwClock Performance Validation Suite"
             echo ""
@@ -83,6 +92,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --baseline=DIR    Specify baseline directory for comparison"
             echo "  --output-dir=DIR  Custom output directory (default: performance/)"
             echo "  --no-cache        Disable caching for analysis (default: caching enabled)"
+            echo "  --parallel[=N]    Run tests in parallel (default: N=2, max: 3)"
             echo "  --help            Show this help message"
             echo ""
             echo "Test Modes:"
@@ -180,15 +190,76 @@ echo -e "${CYAN}Data collection:${NC}"
 echo "  Output directory: ${OUTPUT_DIR}"
 echo "  CSV export: ENABLED"
 echo "  Raw data: ${OUTPUT_DIR}/raw_data"
+if [ "$PARALLEL_JOBS" -gt 1 ]; then
+    echo "  Parallel jobs: ${PARALLEL_JOBS}"
+fi
 echo ""
 
 # Run the performance tests
 echo -e "${YELLOW}Executing test suite...${NC}"
 START_TIME=$(date +%s)
 
-$TEST_BINARY --gtest_filter="$TEST_FILTER" --gtest_output=json:${OUTPUT_DIR}/test_results.json 2>&1 | tee ${OUTPUT_DIR}/test_output.log
-
-TEST_EXIT_CODE=$?
+# Parallel execution support (quick mode only)
+if [ "$PARALLEL_JOBS" -gt 1 ] && [ "$TEST_MODE" = "quick" ]; then
+    echo -e "${CYAN}Running tests in parallel (${PARALLEL_JOBS} jobs)...${NC}"
+    
+    # Test groups for parallel execution (quick mode tests only)
+    declare -a TEST_GROUPS=(
+        "Perf.DisciplineTEStats_MTIE_TDEV"
+        "Perf.SettlingAndOvershoot"
+        "Perf.SlewRateClamp"
+    )
+    
+    declare -a PIDS=()
+    declare -a GROUP_LOGS=()
+    declare -a EXIT_CODES=()
+    
+    # Launch test groups
+    for i in "${!TEST_GROUPS[@]}"; do
+        GROUP_LOG="${OUTPUT_DIR}/test_output_group${i}.log"
+        GROUP_JSON="${OUTPUT_DIR}/test_results_group${i}.json"
+        GROUP_LOGS+=("$GROUP_LOG")
+        
+        echo "  Starting group $((i+1))/${#TEST_GROUPS[@]}: ${TEST_GROUPS[$i]%%:*}"
+        ($TEST_BINARY --gtest_filter="${TEST_GROUPS[$i]}" \
+                      --gtest_output=json:${GROUP_JSON} \
+                      > ${GROUP_LOG} 2>&1) &
+        PID=$!
+        PIDS+=($PID)
+        echo "    PID: $PID"
+        
+        # Throttle if needed
+        if [ ${#PIDS[@]} -ge $PARALLEL_JOBS ]; then
+            echo "  Waiting for group $((i-PARALLEL_JOBS+2)) to complete..."
+            wait ${PIDS[0]}
+            CODE=$?
+            EXIT_CODES+=($CODE)
+            echo "    Exit code: $CODE"
+            PIDS=("${PIDS[@]:1}")
+        fi
+    done
+    
+    # Wait for remaining jobs
+    for pid in "${PIDS[@]}"; do
+        wait $pid
+        EXIT_CODES+=($?)
+    done
+    
+    # Merge logs
+    cat "${GROUP_LOGS[@]}" > ${OUTPUT_DIR}/test_output.log 2>/dev/null || true
+    
+    # Check for failures
+    TEST_EXIT_CODE=0
+    for code in "${EXIT_CODES[@]}"; do
+        if [ $code -ne 0 ]; then
+            TEST_EXIT_CODE=$code
+        fi
+    done
+else
+    # Sequential execution
+    $TEST_BINARY --gtest_filter="$TEST_FILTER" --gtest_output=json:${OUTPUT_DIR}/test_results.json 2>&1 | tee ${OUTPUT_DIR}/test_output.log
+    TEST_EXIT_CODE=$?
+fi
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
