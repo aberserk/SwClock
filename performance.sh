@@ -167,6 +167,15 @@ echo ""
 # Set log directory for tests to use
 export SWCLOCK_LOG_DIR="${OUTPUT_DIR}/raw_data"
 
+# Enable CSV export for detailed time series data
+export SWCLOCK_PERF_CSV=1
+
+echo -e "${CYAN}Data collection:${NC}"
+echo "  Output directory: ${OUTPUT_DIR}"
+echo "  CSV export: ENABLED"
+echo "  Raw data: ${OUTPUT_DIR}/raw_data"
+echo ""
+
 # Run the performance tests
 echo -e "${YELLOW}Executing test suite...${NC}"
 START_TIME=$(date +%s)
@@ -231,6 +240,19 @@ else
     echo -e "${RED}✗ Analysis failed${NC}"
     exit 1
 fi
+
+# Generate time series plots from CSV data
+echo -e "${YELLOW}Generating time series plots from CSV data...${NC}"
+python3 "${SCRIPT_DIR}/tools/read_performance_csv.py" \
+    --logs-dir="${OUTPUT_DIR}/raw_data" \
+    --output-dir="${OUTPUT_DIR}/plots"
+
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ CSV plots generated${NC}"
+else
+    echo -e "${YELLOW}⚠ CSV plotting skipped (no CSV data or error)${NC}"
+fi
+
 echo ""
 
 # ========================================
