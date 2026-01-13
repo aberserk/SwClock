@@ -40,6 +40,7 @@ BASELINE_DIR=""
 OUTPUT_BASE_DIR="performance"
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 OUTPUT_DIR="${OUTPUT_BASE_DIR}/performance_${TIMESTAMP}"
+NO_CACHE=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -66,6 +67,10 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="${OUTPUT_BASE_DIR}/performance_${TIMESTAMP}"
             shift
             ;;
+        --no-cache)
+            NO_CACHE=true
+            shift
+            ;;
         --help)
             echo "SwClock Performance Validation Suite"
             echo ""
@@ -77,6 +82,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --regression      Compare against baseline performance"
             echo "  --baseline=DIR    Specify baseline directory for comparison"
             echo "  --output-dir=DIR  Custom output directory (default: performance/)"
+            echo "  --no-cache        Disable caching for analysis (default: caching enabled)"
             echo "  --help            Show this help message"
             echo ""
             echo "Test Modes:"
@@ -243,9 +249,16 @@ fi
 
 # Generate time series plots from CSV data
 echo -e "${YELLOW}Generating time series plots from CSV data...${NC}"
+if [ "$NO_CACHE" = true ]; then
+    CACHE_ARG="--no-cache"
+else
+    CACHE_ARG=""
+fi
+
 python3 "${SCRIPT_DIR}/tools/read_performance_csv.py" \
     --logs-dir="${OUTPUT_DIR}/raw_data" \
-    --output-dir="${OUTPUT_DIR}/plots"
+    --output-dir="${OUTPUT_DIR}/plots" \
+    $CACHE_ARG
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ CSV plots generated${NC}"
