@@ -141,14 +141,18 @@ class PerformanceAnalyzer:
         test_name = 'DisciplineTEStats_MTIE_TDEV'
         metrics = {}
         
-        # Extract TE stats
+        # Extract TE (Time Error) statistics from test output
+        # These regex patterns match formatted output like:
+        #   "mean(raw)   =       43.3 ns"
+        #   "RMS         =      324.9 ns"
+        # Pattern breakdown: [-+]? = optional sign, [\d.]+ = digits with decimal, \s* = optional whitespace
         patterns = {
-            'mean_raw_ns': r'mean\(raw\)\s*=\s*([-+]?[\d.]+)\s*ns',
-            'mean_detr_ns': r'mean\(detr\)\s*=\s*([-+]?[\d.]+)\s*ns',
-            'drift_ppm': r'\(([-+]?[\d.]+)\s*ppm\)',
-            'rms_ns': r'RMS\s*=\s*([-+]?[\d.]+)\s*ns',
-            'p95_ns': r'P95\s*=\s*([-+]?[\d.]+)\s*ns',
-            'p99_ns': r'P99\s*=\s*([-+]?[\d.]+)\s*ns',
+            'mean_raw_ns': r'mean\(raw\)\s*=\s*([-+]?[\d.]+)\s*ns',      # Raw mean before detrending
+            'mean_detr_ns': r'mean\(detr\)\s*=\s*([-+]?[\d.]+)\s*ns',   # Mean after removing drift
+            'drift_ppm': r'\(([-+]?[\d.]+)\s*ppm\)',                      # Frequency drift in ppm
+            'rms_ns': r'RMS\s*=\s*([-+]?[\d.]+)\s*ns',                   # Root mean square error
+            'p95_ns': r'P95\s*=\s*([-+]?[\d.]+)\s*ns',                   # 95th percentile error
+            'p99_ns': r'P99\s*=\s*([-+]?[\d.]+)\s*ns',                   # 99th percentile error
         }
         
         for key, pattern in patterns.items():
@@ -156,19 +160,27 @@ class PerformanceAnalyzer:
             if match:
                 metrics[key] = float(match.group(1))
         
-        # Extract MTIE
+        # Extract MTIE (Maximum Time Interval Error) measurements
+        # Matches lines like: "MTIE( 1 s) =       6707 ns (target < 100000)"
+        # Captures: (\d+) = observation interval tau in seconds
+        #          ([\d.]+) = MTIE value in nanoseconds
+        # ITU-T G.8260 defines MTIE limits at τ = 1s, 10s, 30s
         mtie_pattern = r'MTIE\(\s*(\d+)\s*s\)\s*=\s*([\d.]+)\s*ns'
         mtie_matches = re.findall(mtie_pattern, content)
         mtie = {}
         for tau, value in mtie_matches:
-            mtie[float(tau)] = float(value)
+            mtie[float(tau)] = float(value)  # Key: observation interval, Value: MTIE in ns
         
-        # Extract TDEV
+        # Extract TDEV (Time Deviation) measurements
+        # Matches lines like: "TDEV(0.1 s) =      546.0 ns (target < 20000)"
+        # Captures: ([\d.]+) = observation interval tau in seconds (float)
+        #          ([\d.]+) = TDEV value in nanoseconds
+        # TDEV measures stability by removing frequency offset effects
         tdev_pattern = r'TDEV\(([\d.]+)\s*s\)\s*=\s*([\d.]+)\s*ns'
         tdev_matches = re.findall(tdev_pattern, content)
         tdev = {}
         for tau, value in tdev_matches:
-            tdev[float(tau)] = float(value)
+            tdev[float(tau)] = float(value)  # Key: observation interval, Value: TDEV in ns
         
         # Create IEEE-compliant structure
         te_stats = {
@@ -200,7 +212,12 @@ class PerformanceAnalyzer:
         test_name = 'SettlingAndOvershoot'
         
         # Extract settling time and overshoot
+        # Extract settling time: time to reach ±10µs after step correction
+        # Matches: "Settling time: 2.90 s (target < 20.00 s)"
         settling_match = re.search(r'Settling time:\s*([\d.]+)\s*s', content)
+        
+        # Extract overshoot: maximum excursion beyond target as percentage of step
+        # Matches: "Overshoot: 500 ns  (0.1% of step; target < 30.0%)"
         overshoot_match = re.search(r'Overshoot:\s*([\d.]+)\s*%', content)
         
         if settling_match and overshoot_match:
@@ -226,6 +243,9 @@ class PerformanceAnalyzer:
         test_name = 'SlewRateClamp'
         
         # Extract effective slew rate
+        # Extract effective slew rate: frequency adjustment rate in ppm
+        # Matches: "eff_ppm =  +42.16 (checking vs expected_target ± 15.0)"
+        # Captures the signed decimal value indicating how fast frequency is adjusted
         slew_match = re.search(r'eff_ppm\s*=\s*([-+]?[\d.]+)', content)
         
         if slew_match:

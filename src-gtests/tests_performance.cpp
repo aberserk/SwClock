@@ -27,28 +27,55 @@
 #define SEC_PER_NS (1.0/1000000000.0)
 #endif
 
-// Targets
+// Targets for performance validation
+// These thresholds ensure SwClock meets IEEE 1588 and ITU-T G.8260 standards
+
+// Time Error (TE) target: Mean absolute error after detrending
+// ITU-T G.8260 Class C: Implicit in MTIE limits
+// SwClock target: < 20 µs (tighter than standard)
 #ifndef TARGET_TE_MEAN_ABS_NS
 #define TARGET_TE_MEAN_ABS_NS 20000LL
 #endif
+
+// MTIE (Maximum Time Interval Error) targets per ITU-T G.8260 Class C
+// These define worst-case time error over observation intervals
+// Class C is suitable for mobile backhaul and packet-based timing
+
+// MTIE @ τ=1s: < 100 µs (ITU-T G.8260 Class C requirement)
 #ifndef TARGET_MTIE_1S_NS
 #define TARGET_MTIE_1S_NS     100000LL
 #endif
+
+// MTIE @ τ=10s: < 200 µs (ITU-T G.8260 Class C requirement)
 #ifndef TARGET_MTIE_10S_NS
 #define TARGET_MTIE_10S_NS    200000LL
 #endif
+
+// MTIE @ τ=30s: < 300 µs (ITU-T G.8260 Class C requirement)
 #ifndef TARGET_MTIE_30S_NS
 #define TARGET_MTIE_30S_NS    300000LL
 #endif
+
+// TDEV (Time Deviation) targets for timing stability
+// Lower TDEV indicates better short-term stability
+
+// TDEV @ τ=0.1s: < 20 µs (jitter/phase noise target)
 #ifndef TARGET_TDEV_0P1S_NS
 #define TARGET_TDEV_0P1S_NS   20000LL
 #endif
+
+// TDEV @ τ=1s: < 40 µs (short-term stability)
 #ifndef TARGET_TDEV_1S_NS
 #define TARGET_TDEV_1S_NS     40000LL
 #endif
+
+// TDEV @ τ=10s: < 80 µs (medium-term stability)
 #ifndef TARGET_TDEV_10S_NS
 #define TARGET_TDEV_10S_NS    80000LL
 #endif
+
+// Polling interval for performance measurements
+// 100ms provides good time resolution while avoiding excessive overhead
 #ifndef PERF_POLL_NS
 #define PERF_POLL_NS (100*1000*1000LL) // 100 ms
 #endif
