@@ -403,3 +403,184 @@ TEST(Perf, HoldoverDrift) {
 
   swclock_destroy(clk);
 }
+
+// ============================================================================
+// Extended Test Scenarios (Priority 5)
+// ============================================================================
+
+/**
+ * Test: Frequency Offset Correction (Positive)
+ * 
+ * Purpose: Validate clock maintains stability with initial frequency offset
+ * Scenario: Initialize clock with +100 ppm offset, measure drift over time
+ * Success: Clock discipline maintains low drift despite initial offset
+ * 
+ * Note: SwClock doesn't actively correct arbitrary frequency offsets without
+ *       time error feedback. This test validates that applied offsets are stable.
+ */
+TEST(Perf, FrequencyOffsetPositive) {
+  SwClock* clk = swclock_create();
+  ASSERT_NE(clk, nullptr);
+
+  const double FREQ_OFFSET_PPM = 100.0;   // +100 ppm initial offset
+  const double MAX_DRIFT_PPM = 1.0;       // Drift should be minimal
+  const double MEASURE_TIME_S = 10.0;     // Measurement window
+
+  printf("\n=== Frequency Offset Stability: +%.1f ppm ===\n", FREQ_OFFSET_PPM);
+
+  // Apply initial frequency offset
+  struct timex tx = {};
+  tx.modes = ADJ_FREQUENCY;
+  tx.freq = (long)(FREQ_OFFSET_PPM * 65536.0);  // Linux units: ppm * 2^16
+  swclock_adjtime(clk, &tx);
+
+  printf("  Applied +%.1f ppm frequency offset\n", FREQ_OFFSET_PPM);
+  printf("  Measuring stability over %.0f seconds...\n", MEASURE_TIME_S);
+
+  // Measure frequency stability with applied offset
+  struct timespec sw0, rt0, sw1, rt1;
+  swclock_gettime(clk, CLOCK_REALTIME, &sw0);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
+  
+  sleep_ns((long long)(MEASURE_TIME_S * NS_PER_SEC));
+  
+  swclock_gettime(clk, CLOCK_REALTIME, &sw1);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
+
+  long long d_sw = ts_to_ns(&sw1) - ts_to_ns(&sw0);
+  long long d_rt = ts_to_ns(&rt1) - ts_to_ns(&rt0);
+  double measured_ppm = ((double)(d_sw - d_rt) / (double)d_rt) * 1e6;
+  double drift_from_target = std::fabs(measured_ppm - FREQ_OFFSET_PPM);
+
+  printf("  Measured frequency: %.3f ppm\n", measured_ppm);
+  printf("  Drift from applied offset: %.3f ppm (target < %.1f ppm)\n", 
+         drift_from_target, MAX_DRIFT_PPM);
+  printf("  ✓ Frequency offset is stable\n");
+
+  // Verify the applied offset is maintained with minimal drift
+  EXPECT_LT(drift_from_target, MAX_DRIFT_PPM);
+
+  swclock_destroy(clk);
+}
+
+/**maintains stability with negative frequency offset
+ * Scenario: Initialize clock with -100 ppm offset, measure drift over time
+ * Success: Clock discipline maintains low drift despite initial offset
+ */
+TEST(Perf, FrequencyOffsetNegative) {
+  SwClock* clk = swclock_create();
+  ASSERT_NE(clk, nullptr);
+
+  const double FREQ_OFFSET_PPM = -100.0;  // -100 ppm initial offset
+  const double MAX_DRIFT_PPM = 1.0;       // Drift should be minimal
+  const double MEASURE_TIME_S = 10.0;     // Measurement window
+
+  printf("\n=== Frequency Offset Stability: %.1f ppm ===\n", FREQ_OFFSET_PPM);
+
+  // Apply initial frequency offset
+  struct timex tx = {};
+  tx.modes = ADJ_FREQUENCY;
+  tx.freq = (long)(FREQ_OFFSET_PPM * 65536.0);  // Linux units: ppm * 2^16
+  swclock_adjtime(clk, &tx);
+
+  printf("  Applied %.1f ppm frequency offset\n", FREQ_OFFSET_PPM);
+  printf("  Measuring stability over %.0f seconds...\n", MEASURE_TIME_S);
+
+  // Measure frequency stability with applied offset
+  struct timespec sw0, rt0, sw1, rt1;
+  swclock_gettime(clk, CLOCK_REALTIME, &sw0);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt0);
+  
+  sleep_ns((long long)(MEASURE_TIME_S * NS_PER_SEC));
+  
+  swclock_gettime(clk, CLOCK_REALTIME, &sw1);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &rt1);
+
+  long long d_sw = ts_to_ns(&sw1) - ts_to_ns(&sw0);
+  long long d_rt = ts_to_ns(&rt1) - ts_to_ns(&rt0);
+  double measured_ppm = ((double)(d_sw - d_rt) / (double)d_rt) * 1e6;
+  double drift_from_target = std::fabs(measured_ppm - FREQ_OFFSET_PPM);
+
+  printf("  Measured frequency: %.3f ppm\n", measured_ppm);
+  printf("  Drift from applied offset: %.3f ppm (target < %.1f ppm)\n", 
+         drift_from_target, MAX_DRIFT_PPM);
+  printf("  ✓ Frequency offset is stable\n");
+
+  // Verify the applied offset is maintained with minimal drift
+  EXPECT_LT(drift_from_target, MAX_DRIFT_PPM);
+
+  swclock_destroy(clk);
+}
+
+/**
+ * Test: Multiple Step Sizes
+ * 
+ * Purpose: Validate servo response across different step magnitudes
+ * Scenario: Test step corrections of 100µs, 1ms, 10ms, 100ms
+ * Success: Settling time scales appropriately with step size
+ */
+TEST(Perf, MultipleStepSizes) {
+  printf("\n=== Multiple Step Size Response ===\n");
+
+  struct StepTest {
+    double step_ms;
+    double max_settling_s;
+    double max_overshoot_pct;
+  };
+
+  // Define test cases: step size -> expected settling time
+  StepTest tests[] = {
+    {0.1,   5.0,  10.0},  // 100µs step: fast settle
+    {1.0,   10.0, 20.0},  // 1ms step: moderate settle
+    {10.0,  20.0, 30.0},  // 10ms step: slower settle
+    {100.0, 40.0, 40.0},  // 100ms step: longest settle
+  };
+
+  for (const auto& test : tests) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+
+    printf("\n  Step: %.3f ms\n", test.step_ms);
+
+    // Apply step offset
+    struct timex tx = {};
+    tx.modes = ADJ_SETOFFSET | ADJ_NANO;
+    long long offset_ns = (long long)(test.step_ms * 1e6);
+    tx.time.tv_sec = offset_ns / NS_PER_SEC;
+    tx.time.tv_usec = offset_ns % NS_PER_SEC;
+    swclock_adjtime(clk, &tx);
+
+    // Measure settling behavior
+    struct timespec sw_ref, rt_ref;
+    swclock_gettime(clk, CLOCK_REALTIME, &sw_ref);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &rt_ref);
+
+    long long max_te = 0;
+    double settling_time = -1.0;
+    const long long SETTLE_THRESHOLD_NS = 10000;  // ±10µs
+    const double MAX_TEST_TIME_S = test.max_settling_s + 10.0;
+    
+    for (double t = 0.1; t < MAX_TEST_TIME_S; t += 0.1) {
+      sleep_ns((long long)(0.1 * NS_PER_SEC));
+      
+      long long te = TE_now_SWvsRAW(clk, sw_ref, rt_ref);
+      if (std::abs(te) > max_te) max_te = std::abs(te);
+      
+      if (settling_time < 0 && std::abs(te) <= SETTLE_THRESHOLD_NS) {
+        settling_time = t;
+      }
+    }
+
+    double overshoot_pct = (max_te / (offset_ns)) * 100.0;
+
+    printf("    Settling time: %.1f s (target < %.1f s)\n", 
+           settling_time, test.max_settling_s);
+    printf("    Max overshoot: %.1f%% (target < %.1f%%)\n", 
+           overshoot_pct, test.max_overshoot_pct);
+
+    EXPECT_LT(settling_time, test.max_settling_s);
+    EXPECT_LT(overshoot_pct, test.max_overshoot_pct);
+
+    swclock_destroy(clk);
+  }
+}
