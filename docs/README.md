@@ -23,14 +23,19 @@ Welcome to the SwClock performance validation framework documentation.
   - ITU-T and IEEE standards compliance
   - Mathematical formulas and interpretations
 
+- **[LINUX_COMPATIBILITY.md](LINUX_COMPATIBILITY.md)** - Linux compatibility reference
+  - API compatibility matrix (adjtimex modes, status, fields)
+  - Performance comparison: macOS vs Linux
+  - Cross-platform code guidelines
+  - Known differences and limitations
+  - Testing on Linux recommendations
+
 ### Project Documentation
 
 Located in project root:
 
 - **[README.md](../README.md)** - Project overview and setup
 - **[TODO.txt](../TODO.txt)** - Known limitations and future work
-- **[IMPLEMENTATION_GAP_ANALYSIS.md](../IMPLEMENTATION_GAP_ANALYSIS.md)** - Implementation status vs original plan
-- **[PERFORMANCE_VALIDATION_PROOF.md](../PERFORMANCE_VALIDATION_PROOF.md)** - Validation results and evidence
 
 ## Quick Links
 
