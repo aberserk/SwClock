@@ -1,4 +1,4 @@
-// gtests/tests_sw_clock.cpp — unit tests adjusted to Linux semantics
+// src-gtests/tests_sw_clock.cpp — unit tests adjusted to Linux semantics
 #include <gtest/gtest.h>
 #include <time.h>
 #include <stdint.h>

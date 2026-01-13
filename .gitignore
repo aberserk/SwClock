@@ -1,7 +1,11 @@
 build/
 logs/
 plots/
+performance/
 venv/
+__pycache__/
+*.pyc
+*.pyo
 *.o
 *.log
 *.tmp

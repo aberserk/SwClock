@@ -58,7 +58,7 @@ endif()
 find_package(GTest QUIET)
 
 # Look for gtest source files
-file(GLOB GTEST_SOURCES "gtests/*.cpp" "gtests/*.c")
+file(GLOB GTEST_SOURCES "src-gtests/*.cpp" "src-gtests/*.c")
 
 if(GTest_FOUND AND GTEST_SOURCES)
     # Create gtests executable using modern CMake GTest targets
@@ -81,7 +81,7 @@ elseif(GTEST_SOURCES)
     message(WARNING "  brew install googletest")
     message(STATUS "Run: ./setup.sh to install dependencies")
 else()
-    message(STATUS "No gtest source files found in gtests/ directory")
+    message(STATUS "No gtest source files found in src-gtests/ directory")
 endif()
 
 # Installation rules
