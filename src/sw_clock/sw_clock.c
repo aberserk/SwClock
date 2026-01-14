@@ -67,6 +67,14 @@ struct SwClock {
     // Logging support
     FILE* log_fp;         // CSV file handle
     bool  is_logging;     // true if logging is active
+    
+    // Event logging support (Priority 1 Recommendation 2)
+    FILE* event_log_fp;             // Binary event log file
+    bool  event_logging_enabled;    // Event logging active flag
+    swclock_ringbuf_t event_ringbuf; // Lock-free event buffer
+    pthread_t event_logger_thread;  // Background logger thread
+    bool event_logger_running;      // Logger thread status
+    uint64_t event_sequence;        // Event sequence number
 };
 
 // Forward declaration
@@ -122,6 +130,9 @@ void swclock_disable_pi_servo(SwClock* c)
     pthread_mutex_lock(&c->lock);
     c->pi_servo_enabled = false;
     pthread_mutex_unlock(&c->lock);
+    
+    // Log PI disable event
+    swclock_log_event(c, SWCLOCK_EVENT_PI_DISABLE, NULL, 0);
 }
 
 // One PI control step. dt_s is the elapsed RAW time since last poll in seconds.
@@ -142,10 +153,36 @@ static void swclock_pi_step(SwClock* c, double dt_s) {
     double u_ppm = (SWCLOCK_PI_KP_PPM_PER_S * err_s) + (SWCLOCK_PI_KI_PPM_PER_S2 * c->pi_int_error_s);
 
     // Clamp
-    if (u_ppm > SWCLOCK_PI_MAX_PPM)  u_ppm = SWCLOCK_PI_MAX_PPM;
-    if (u_ppm < -SWCLOCK_PI_MAX_PPM) u_ppm = -SWCLOCK_PI_MAX_PPM;
+    bool clamped = false;
+    if (u_ppm > SWCLOCK_PI_MAX_PPM) {
+        u_ppm = SWCLOCK_PI_MAX_PPM;
+        clamped = true;
+    }
+    if (u_ppm < -SWCLOCK_PI_MAX_PPM) {
+        u_ppm = -SWCLOCK_PI_MAX_PPM;
+        clamped = true;
+    }
 
     c->pi_freq_ppm = u_ppm;
+    
+    // Log frequency clamp event if clamped
+    if (clamped) {
+        swclock_event_frequency_clamp_payload_t clamp_payload = {
+            .requested_ppm = (SWCLOCK_PI_KP_PPM_PER_S * err_s) + (SWCLOCK_PI_KI_PPM_PER_S2 * c->pi_int_error_s),
+            .clamped_ppm = u_ppm,
+            .max_ppm = SWCLOCK_PI_MAX_PPM
+        };
+        swclock_log_event(c, SWCLOCK_EVENT_FREQUENCY_CLAMP, &clamp_payload, sizeof(clamp_payload));
+    }
+    
+    // Log PI step event
+    swclock_event_pi_step_payload_t pi_payload = {
+        .pi_freq_ppm = c->pi_freq_ppm,
+        .pi_int_error_s = c->pi_int_error_s,
+        .remaining_phase_ns = c->remaining_phase_ns,
+        .servo_enabled = c->pi_servo_enabled ? 1 : 0
+    };
+    swclock_log_event(c, SWCLOCK_EVENT_PI_STEP, &pi_payload, sizeof(pi_payload));
 
     // Anti-windup: if close enough, zero everything
     if (llabs(c->remaining_phase_ns) <= SWCLOCK_PHASE_EPS_NS) {
@@ -248,6 +285,13 @@ SwClock* swclock_create(void) {
 
     c->stop_flag           = false;
     c->poll_thread_running = true;
+    
+    // Initialize event logging fields
+    c->event_log_fp = NULL;
+    c->event_logging_enabled = false;
+    c->event_logger_running = false;
+    c->event_sequence = 0;
+    swclock_ringbuf_init(&c->event_ringbuf);
 
     if (pthread_create(&c->poll_thread, NULL, swclock_poll_thread_main, c) != 0) {
         c->poll_thread_running = false;
@@ -268,8 +312,9 @@ void swclock_destroy(SwClock* c) {
         // Wait for thread to exit
         pthread_join(c->poll_thread, NULL);
         
-        // Now safely close the log
+        // Now safely close the logs
         swclock_close_log(c);
+        swclock_stop_event_log(c);
     }
     
     pthread_mutex_destroy(&c->lock);
@@ -328,6 +373,15 @@ int swclock_settime(SwClock* c, clockid_t clk_id, const struct timespec *tp) {
 
 int swclock_adjtime(SwClock* c, struct timex *tptr) {
     if (!c || !tptr) { errno = EINVAL; return -1; }
+
+    // Log adjtime call event
+    swclock_event_adjtime_payload_t adj_payload_entry = {
+        .modes = tptr->modes,
+        .offset_ns = (tptr->modes & ADJ_NANO) ? tptr->offset : tptr->offset * 1000LL,
+        .freq_scaled_ppm = (tptr->modes & ADJ_FREQUENCY) ? tptr->freq : 0,
+        .return_code = -1
+    };
+    swclock_log_event(c, SWCLOCK_EVENT_ADJTIME_CALL, &adj_payload_entry, sizeof(adj_payload_entry));
 
     pthread_mutex_lock(&c->lock);
     swclock_rebase_now_and_update(c);
@@ -407,6 +461,16 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
     tptr->tai       = c->tai;
 
     pthread_mutex_unlock(&c->lock);
+    
+    // Log adjtime return event
+    swclock_event_adjtime_payload_t adj_payload_return = {
+        .modes = modes,
+        .offset_ns = 0,
+        .freq_scaled_ppm = c->freq_scaled_ppm,
+        .return_code = TIME_OK
+    };
+    swclock_log_event(c, SWCLOCK_EVENT_ADJTIME_RETURN, &adj_payload_return, sizeof(adj_payload_return));
+    
     return TIME_OK;
 }
 
@@ -489,6 +553,9 @@ void swclock_enable_PIServo(SwClock* c)
         c->pi_int_error_s   = 0.0;
         c->pi_freq_ppm      = 0.0;
         pthread_mutex_unlock(&c->lock);
+        
+        // Log PI enable event
+        swclock_log_event(c, SWCLOCK_EVENT_PI_ENABLE, NULL, 0);
     }
 }
 
@@ -568,6 +635,24 @@ void swclock_start_log(SwClock* c, const char* filename) {
     c->is_logging = true;
 
     pthread_mutex_unlock(&c->lock);
+    
+    // Automatically start event logging if SWCLOCK_EVENT_LOG is set
+    if (getenv("SWCLOCK_EVENT_LOG") != NULL) {
+        // Generate event log filename based on CSV filename
+        char event_log_path[512];
+        snprintf(event_log_path, sizeof(event_log_path), "logs/events_%s.bin", datetime_buf);
+        
+        // Replace colons and spaces in the filename for filesystem compatibility
+        for (char* p = event_log_path; *p; p++) {
+            if (*p == ':' || *p == ' ') *p = '-';
+        }
+        
+        if (swclock_start_event_log(c, event_log_path) == 0) {
+            printf("Event logging started: %s\n", event_log_path);
+        } else {
+            fprintf(stderr, "Warning: Failed to start event logging\n");
+        }
+    }
 }
 
 void swclock_log(SwClock* c) {
@@ -619,4 +704,164 @@ void swclock_close_log(SwClock* c) {
     pthread_mutex_unlock(&c->lock);
 }
 
+// ================= Event Logging (Priority 1 Recommendation 2) =================
 
+// Forward declaration
+static void* swclock_event_logger_thread_main(void* arg);
+
+static uint64_t swclock_get_timestamp_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+int swclock_start_event_log(SwClock* c, const char* filename) {
+    if (!c || !filename) return -1;
+    
+    pthread_mutex_lock(&c->lock);
+    
+    // Already logging
+    if (c->event_logging_enabled) {
+        pthread_mutex_unlock(&c->lock);
+        return -1;
+    }
+    
+    // Open binary log file
+    c->event_log_fp = fopen(filename, "wb");
+    if (!c->event_log_fp) {
+        pthread_mutex_unlock(&c->lock);
+        return -1;
+    }
+    
+    // Write file header
+    swclock_event_log_header_t header = {
+        .magic = SWCLOCK_EVENT_LOG_MAGIC,
+        .version_major = 1,
+        .version_minor = 0,
+        .start_time_ns = swclock_get_timestamp_ns()
+    };
+    strncpy(header.swclock_version, SWCLOCK_VERSION, sizeof(header.swclock_version) - 1);
+    
+    if (fwrite(&header, sizeof(header), 1, c->event_log_fp) != 1) {
+        fclose(c->event_log_fp);
+        c->event_log_fp = NULL;
+        pthread_mutex_unlock(&c->lock);
+        return -1;
+    }
+    fflush(c->event_log_fp);
+    
+    // Initialize ring buffer
+    swclock_ringbuf_init(&c->event_ringbuf);
+    c->event_sequence = 0;
+    c->event_logging_enabled = true;
+    
+    // Start background logger thread
+    c->event_logger_running = true;
+    if (pthread_create(&c->event_logger_thread, NULL,
+                      swclock_event_logger_thread_main, c) != 0) {
+        c->event_logging_enabled = false;
+        c->event_logger_running = false;
+        fclose(c->event_log_fp);
+        c->event_log_fp = NULL;
+        pthread_mutex_unlock(&c->lock);
+        return -1;
+    }
+    
+    pthread_mutex_unlock(&c->lock);
+    
+    // Log start event
+    swclock_log_event(c, SWCLOCK_EVENT_LOG_START, NULL, 0);
+    
+    return 0;
+}
+
+void swclock_stop_event_log(SwClock* c) {
+    if (!c) return;
+    
+    pthread_mutex_lock(&c->lock);
+    
+    if (!c->event_logging_enabled) {
+        pthread_mutex_unlock(&c->lock);
+        return;
+    }
+    
+    // Log stop event
+    pthread_mutex_unlock(&c->lock);
+    swclock_log_event(c, SWCLOCK_EVENT_LOG_STOP, NULL, 0);
+    pthread_mutex_lock(&c->lock);
+    
+    // Stop logger thread
+    c->event_logger_running = false;
+    pthread_mutex_unlock(&c->lock);
+    
+    pthread_join(c->event_logger_thread, NULL);
+    
+    pthread_mutex_lock(&c->lock);
+    
+    // Close file
+    if (c->event_log_fp) {
+        fclose(c->event_log_fp);
+        c->event_log_fp = NULL;
+    }
+    
+    c->event_logging_enabled = false;
+    
+    pthread_mutex_unlock(&c->lock);
+}
+
+void swclock_log_event(SwClock* c, swclock_event_type_t event_type,
+                      const void* payload, size_t payload_size) {
+    if (!c || !c->event_logging_enabled) return;
+    
+    // Build event header
+    swclock_event_header_t header = {
+        .sequence_num = __atomic_fetch_add(&c->event_sequence, 1, __ATOMIC_SEQ_CST),
+        .timestamp_ns = swclock_get_timestamp_ns(),
+        .event_type = event_type,
+        .payload_size = (uint16_t)payload_size,
+        .reserved = 0
+    };
+    
+    // Combine header + payload into single buffer
+    uint8_t event_buffer[SWCLOCK_EVENT_MAX_SIZE];
+    memcpy(event_buffer, &header, sizeof(header));
+    if (payload && payload_size > 0) {
+        memcpy(event_buffer + sizeof(header), payload, payload_size);
+    }
+    
+    // Push to ring buffer (non-blocking)
+    swclock_ringbuf_push(&c->event_ringbuf, event_buffer,
+                        sizeof(header) + payload_size);
+}
+
+static void* swclock_event_logger_thread_main(void* arg) {
+    SwClock* c = (SwClock*)arg;
+    uint8_t event_buffer[SWCLOCK_EVENT_MAX_SIZE];
+    
+    while (c->event_logger_running || !swclock_ringbuf_is_empty(&c->event_ringbuf)) {
+        size_t event_size;
+        
+        // Pop event from ring buffer
+        if (swclock_ringbuf_pop(&c->event_ringbuf, event_buffer,
+                               SWCLOCK_EVENT_MAX_SIZE, &event_size)) {
+            // Write to file
+            pthread_mutex_lock(&c->lock);
+            if (c->event_log_fp) {
+                fwrite(event_buffer, 1, event_size, c->event_log_fp);
+                fflush(c->event_log_fp);
+            }
+            pthread_mutex_unlock(&c->lock);
+        } else {
+            // No events available, sleep briefly
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; // 1ms
+            nanosleep(&ts, NULL);
+        }
+        
+        // Check for overruns
+        if (swclock_ringbuf_clear_overrun(&c->event_ringbuf)) {
+            fprintf(stderr, "swclock: Event ring buffer overrun detected\n");
+        }
+    }
+    
+    return NULL;
+}

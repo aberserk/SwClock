@@ -252,21 +252,26 @@ SwClock CURRENT TIME:
 **Logging control:**
 - `SWCLOCK_PERF_CSV=1` - Enable CSV logging with comprehensive metadata headers
 - `SWCLOCK_SERVO_LOG=1` - Enable detailed servo state logging (13 columns)
+- `SWCLOCK_EVENT_LOG=1` - Enable binary structured event logging
 - `SWCLOCK_LOG_DIR=path` - Custom log directory (default: `logs/`)
 
 **Usage:**
 ```bash
 # Enable all logging features
-SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 ./build/swclock_gtests
+SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 SWCLOCK_EVENT_LOG=1 ./build/swclock_gtests
 
 # Custom log directory
 SWCLOCK_LOG_DIR=/tmp/swclock_logs ./performance.sh --quick
+
+# View event logs
+./build/swclock_event_dump logs/events_20260119-143022.bin
 ```
 
 **Advanced features:**
 - **Enhanced CSV Headers**: 36-line headers with test UUID, system info, compliance targets
 - **Log Integrity**: Automatic SHA-256 sealing via `tools/log_integrity.py`
 - **Independent Validation**: Metrics recomputation via `tools/validate_metrics.py`
+- **Event Logging**: Lock-free binary event logs with `tools/swclock_event_dump` viewer
 
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#advanced-logging-and-audit-features) for details.
 

@@ -19,6 +19,8 @@ extern "C" {
 #include <sys/time.h> // timeval
 #include "sw_clock_constants.h"
 #include "sw_clock_utilities.h"
+#include "sw_clock_events.h"
+#include "sw_clock_ringbuf.h"
 #include <stdio.h>
 
 // -------- timex compatibility (for macOS) -------------------
@@ -154,6 +156,30 @@ void     swclock_close_log(SwClock* c);
  * @param c Pointer to SwClock instance
  */
 void     swclock_disable_pi_servo(SwClock* c);
+
+/**
+ * Start event logging to binary file.
+ * @param c Pointer to SwClock instance
+ * @param filename Event log file path
+ * @return 0 on success, -1 on failure
+ */
+int      swclock_start_event_log(SwClock* c, const char* filename);
+
+/**
+ * Stop event logging and close file.
+ * @param c Pointer to SwClock instance
+ */
+void     swclock_stop_event_log(SwClock* c);
+
+/**
+ * Log a custom event with optional payload.
+ * @param c Pointer to SwClock instance
+ * @param event_type Event type
+ * @param payload Optional payload data (can be NULL)
+ * @param payload_size Payload size in bytes
+ */
+void     swclock_log_event(SwClock* c, swclock_event_type_t event_type,
+                           const void* payload, size_t payload_size);
 
 #ifdef __cplusplus
 } // extern "C"
