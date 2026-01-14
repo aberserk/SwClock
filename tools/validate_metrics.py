@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 # Import existing IEEE metrics computation
-from ieee_metrics import IEEEMetrics, compute_te_stats
+from ieee_metrics import IEEEMetrics, analyze_performance_data
 
 
 class ValidationReport:
@@ -130,28 +130,28 @@ class IndependentMetricsValidator:
         """
         sample_dt_s = 1.0 / sample_rate_hz
         
-        # Compute basic TE statistics
-        te_stats = compute_te_stats(te_ns, sample_rate_hz)
+        # Compute basic TE statistics using analyze_performance_data
+        analysis = analyze_performance_data(te_ns, sample_rate_hz)
+        te_stats = {
+            'mean_te_ns': analysis.get('mean_te_detrended', 0.0),
+            'std_te_ns': analysis.get('std_te', 0.0),
+            'max_te_ns': analysis.get('max_te', 0.0),
+            'min_te_ns': analysis.get('min_te', 0.0),
+            'p95_te_ns': analysis.get('p95_te', 0.0),
+            'p99_te_ns': analysis.get('p99_te', 0.0)
+        }
         
-        # Compute MTIE for standard observation intervals
-        mtie_taus_s = [1, 10, 30, 60]
+        # Extract MTIE/TDEV from analysis
         mtie_results = {}
-        
-        for tau_s in mtie_taus_s:
-            tau_samples = int(round(tau_s / sample_dt_s))
-            if tau_samples < len(te_ns):
-                mtie_ns = self.metrics_engine.compute_mtie(te_ns, sample_dt_s, [tau_s])
-                if tau_s in mtie_ns:
-                    mtie_results[f'mtie_{tau_s}s'] = mtie_ns[tau_s]
-        
-        # Compute TDEV for standard observation intervals
-        tdev_taus_s = [0.1, 1.0, 10.0]
         tdev_results = {}
         
-        for tau_s in tdev_taus_s:
-            tdev_ns = self.metrics_engine.compute_tdev(te_ns, sample_dt_s, [tau_s])
-            if tau_s in tdev_ns:
-                tdev_results[f'tdev_{tau_s}s'] = tdev_ns[tau_s]
+        if 'mtie' in analysis:
+            for tau_s, value_ns in analysis['mtie'].items():
+                mtie_results[f'mtie_{int(tau_s)}s'] = value_ns
+        
+        if 'tdev' in analysis:
+            for tau_s, value_ns in analysis['tdev'].items():
+                tdev_results[f'tdev_{tau_s}s'] = value_ns
         
         return {
             'te_stats': te_stats,
