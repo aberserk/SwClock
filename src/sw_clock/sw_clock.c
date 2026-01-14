@@ -555,23 +555,28 @@ static void* swclock_poll_thread_main(void* arg) {
         
         // Real-time monitoring: Add TE sample to circular buffer (Rec 7)
         if (c->monitoring_enabled && c->monitor) {
-            // Compute current TE against MONOTONIC_RAW reference
-            struct timespec now_rt, now_mono;
-            clock_gettime(CLOCK_REALTIME, &now_rt);
+            // Compute Time Error: Reference_Time - SwClock_Disciplined_Time
+            // Both must be in the same time domain (REALTIME)
+            
+            // Reference: System's CLOCK_REALTIME (undisciplined)
+            struct timespec sys_realtime;
+            clock_gettime(CLOCK_REALTIME, &sys_realtime);
+            int64_t ref_time_ns = ts_to_ns(&sys_realtime);
+            
+            // SwClock's disciplined REALTIME
+            struct timespec sw_realtime;
+            swclock_gettime(c, CLOCK_REALTIME, &sw_realtime);
+            int64_t swclock_time_ns = ts_to_ns(&sw_realtime);
+            
+            // TE = Reference - SwClock (positive means SwClock is behind)
+            int64_t te_ns = ref_time_ns - swclock_time_ns;
+            
+            // Use MONOTONIC_RAW for timestamp (monotonic, steady reference)
+            struct timespec now_mono;
             clock_gettime(CLOCK_MONOTONIC_RAW, &now_mono);
+            uint64_t timestamp_ns = (uint64_t)ts_to_ns(&now_mono);
             
-            int64_t rt_ns = ts_to_ns(&now_rt);
-            int64_t mono_ns = ts_to_ns(&now_mono);
-            
-            // Get SwClock's view of MONOTONIC
-            struct timespec sw_mono;
-            swclock_gettime(c, CLOCK_MONOTONIC, &sw_mono);
-            int64_t sw_mono_ns = ts_to_ns(&sw_mono);
-            
-            // TE = REALTIME - SwClock_MONOTONIC
-            int64_t te_ns = rt_ns - sw_mono_ns;
-            
-            swclock_monitor_add_sample(c->monitor, (uint64_t)mono_ns, te_ns);
+            swclock_monitor_add_sample(c->monitor, timestamp_ns, te_ns);
         }
     }
     return NULL;
