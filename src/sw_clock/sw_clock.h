@@ -21,6 +21,7 @@ extern "C" {
 #include "sw_clock_utilities.h"
 #include "sw_clock_events.h"
 #include "sw_clock_ringbuf.h"
+#include "sw_clock_monitor.h"
 #include <stdio.h>
 
 // -------- timex compatibility (for macOS) -------------------
@@ -176,10 +177,33 @@ void     swclock_stop_event_log(SwClock* c);
  * @param c Pointer to SwClock instance
  * @param event_type Event type
  * @param payload Optional payload data (can be NULL)
- * @param payload_size Payload size in bytes
+ * @payload_size Payload size in bytes
  */
 void     swclock_log_event(SwClock* c, swclock_event_type_t event_type,
                            const void* payload, size_t payload_size);
+
+/**
+ * Enable real-time monitoring mode.
+ * @param c Pointer to SwClock instance
+ * @param enable True to enable, false to disable
+ * @return 0 on success, -1 on failure
+ */
+int      swclock_enable_monitoring(SwClock* c, bool enable);
+
+/**
+ * Get current real-time metrics snapshot.
+ * @param c Pointer to SwClock instance
+ * @param snapshot Output metrics snapshot
+ * @return 0 on success, -1 on failure
+ */
+int      swclock_get_metrics(SwClock* c, swclock_metrics_snapshot_t* snapshot);
+
+/**
+ * Set threshold monitoring configuration.
+ * @param c Pointer to SwClock instance
+ * @param config Threshold configuration
+ */
+void     swclock_set_thresholds(SwClock* c, const swclock_threshold_config_t* config);
 
 #ifdef __cplusplus
 } // extern "C"

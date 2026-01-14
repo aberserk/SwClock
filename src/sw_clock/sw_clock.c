@@ -75,6 +75,10 @@ struct SwClock {
     pthread_t event_logger_thread;  // Background logger thread
     bool event_logger_running;      // Logger thread status
     uint64_t event_sequence;        // Event sequence number
+    
+    // Real-time monitoring (Priority 2 Recommendation 7)
+    swclock_monitor_t* monitor;     // Monitoring context (NULL if disabled)
+    bool monitoring_enabled;         // Monitoring active flag
 };
 
 // Forward declaration
@@ -292,6 +296,10 @@ SwClock* swclock_create(void) {
     c->event_logger_running = false;
     c->event_sequence = 0;
     swclock_ringbuf_init(&c->event_ringbuf);
+    
+    // Initialize monitoring fields (Rec 7)
+    c->monitor = NULL;
+    c->monitoring_enabled = false;
 
     if (pthread_create(&c->poll_thread, NULL, swclock_poll_thread_main, c) != 0) {
         c->poll_thread_running = false;
@@ -315,6 +323,11 @@ void swclock_destroy(SwClock* c) {
         // Now safely close the logs
         swclock_close_log(c);
         swclock_stop_event_log(c);
+        
+        // Disable monitoring
+        if (c->monitoring_enabled) {
+            swclock_enable_monitoring(c, false);
+        }
     }
     
     pthread_mutex_destroy(&c->lock);
@@ -538,6 +551,27 @@ static void* swclock_poll_thread_main(void* arg) {
                 swclock_log(c);  // ENABLED: Priority 1 Recommendation 5
             }
             pthread_mutex_unlock(&c->lock);
+        }
+        
+        // Real-time monitoring: Add TE sample to circular buffer (Rec 7)
+        if (c->monitoring_enabled && c->monitor) {
+            // Compute current TE against MONOTONIC_RAW reference
+            struct timespec now_rt, now_mono;
+            clock_gettime(CLOCK_REALTIME, &now_rt);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &now_mono);
+            
+            int64_t rt_ns = ts_to_ns(&now_rt);
+            int64_t mono_ns = ts_to_ns(&now_mono);
+            
+            // Get SwClock's view of MONOTONIC
+            struct timespec sw_mono;
+            swclock_gettime(c, CLOCK_MONOTONIC, &sw_mono);
+            int64_t sw_mono_ns = ts_to_ns(&sw_mono);
+            
+            // TE = REALTIME - SwClock_MONOTONIC
+            int64_t te_ns = rt_ns - sw_mono_ns;
+            
+            swclock_monitor_add_sample(c->monitor, (uint64_t)mono_ns, te_ns);
         }
     }
     return NULL;
@@ -864,4 +898,82 @@ static void* swclock_event_logger_thread_main(void* arg) {
     }
     
     return NULL;
+}
+
+// ================= Real-Time Monitoring (Rec 7) =================
+
+int swclock_enable_monitoring(SwClock* c, bool enable) {
+    if (!c) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    pthread_mutex_lock(&c->lock);
+    
+    if (enable && !c->monitoring_enabled) {
+        // Allocate and initialize monitor
+        c->monitor = malloc(sizeof(swclock_monitor_t));
+        if (!c->monitor) {
+            pthread_mutex_unlock(&c->lock);
+            return -1;
+        }
+        
+        // Initialize monitor with 10 Hz sample rate (SWCLOCK_POLL_HZ)
+        if (swclock_monitor_init(c->monitor, 100.0) != 0) {
+            free(c->monitor);
+            c->monitor = NULL;
+            pthread_mutex_unlock(&c->lock);
+            return -1;
+        }
+        
+        // Start background computation thread
+        if (swclock_monitor_start_compute_thread(c->monitor) != 0) {
+            swclock_monitor_destroy(c->monitor);
+            free(c->monitor);
+            c->monitor = NULL;
+            pthread_mutex_unlock(&c->lock);
+            return -1;
+        }
+        
+        c->monitoring_enabled = true;
+        
+    } else if (!enable && c->monitoring_enabled) {
+        // Disable monitoring
+        if (c->monitor) {
+            swclock_monitor_destroy(c->monitor);
+            free(c->monitor);
+            c->monitor = NULL;
+        }
+        
+        c->monitoring_enabled = false;
+    }
+    
+    pthread_mutex_unlock(&c->lock);
+    return 0;
+}
+
+int swclock_get_metrics(SwClock* c, swclock_metrics_snapshot_t* snapshot) {
+    if (!c || !snapshot) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    if (!c->monitoring_enabled || !c->monitor) {
+        errno = ENOTSUP;
+        return -1;
+    }
+    
+    return swclock_monitor_get_metrics(c->monitor, snapshot);
+}
+
+void swclock_set_thresholds(SwClock* c, const swclock_threshold_config_t* config) {
+    if (!c || !config) return;
+    
+    pthread_mutex_lock(&c->lock);
+    
+    if (c->monitoring_enabled && c->monitor) {
+        swclock_monitor_set_thresholds(c->monitor, config);
+    }
+    
+    pthread_mutex_unlock(&c->lock);
 }

@@ -28,6 +28,7 @@ set(SWCLOCK_SOURCES
     src/sw_clock/sw_clock_structured_log.c
     src/sw_clock/sw_clock_events.c
     src/sw_clock/sw_clock_ringbuf.c
+    src/sw_clock/sw_clock_monitor.c
 )
 
 set(SWCLOCK_HEADERS
@@ -35,6 +36,7 @@ set(SWCLOCK_HEADERS
     src/sw_clock/sw_clock_structured_log.h
     src/sw_clock/sw_clock_events.h
     src/sw_clock/sw_clock_ringbuf.h
+    src/sw_clock/sw_clock_monitor.h
 )
 
 
@@ -95,8 +97,13 @@ add_executable(swclock_event_dump tools/swclock_event_dump.c)
 target_link_libraries(swclock_event_dump PRIVATE swclock)
 target_include_directories(swclock_event_dump PRIVATE src/sw_clock)
 
+# Build monitor_demo tool (Recommendation 7)
+add_executable(monitor_demo tools/monitor_demo.c)
+target_link_libraries(monitor_demo PRIVATE swclock)
+target_include_directories(monitor_demo PRIVATE src/sw_clock)
+
 # Installation rules
-install(TARGETS swclock swclock_event_dump
+install(TARGETS swclock swclock_event_dump monitor_demo
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
