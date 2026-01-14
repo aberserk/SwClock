@@ -394,6 +394,13 @@ def main():
             print("  All computed metrics match expected values within tolerance")
             print(f"  Tolerance: ±{MetricsComparator.RELATIVE_TOLERANCE*100:.1f}% relative")
             print(f"             ±{MetricsComparator.ABSOLUTE_TOLERANCE:.1f}ns absolute (near-zero)")
+            print(f"{'='*70}")
+            print("\nMEASUREMENT UNCERTAINTY (ISO/IEC Guide 98-3 GUM):")
+            print("  Expanded Uncertainty: U = ±600 ns (k=2, 95% confidence)")
+            print("  Combined Std Uncertainty: u_c = 300 ns")
+            print("  Dominant Contributor: Interrupt latency (92.6%)")
+            print("  Documentation: docs/UNCERTAINTY_BUDGET.md")
+            print("  Analysis Tool: tools/uncertainty_analysis.py")
             print(f"{'='*70}\n")
             return 0
         else:

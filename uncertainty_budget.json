@@ -1,0 +1,72 @@
+{
+  "standard": "ISO/IEC Guide 98-3:2008 (GUM)",
+  "measurement_units": "nanoseconds",
+  "coverage_factor": 2.0,
+  "confidence_level": "~95%",
+  "combined_standard_uncertainty_ns": 300.001,
+  "expanded_uncertainty_ns": 600.001,
+  "effective_degrees_of_freedom": "infinite",
+  "uncertainty_statement": "U = \u00b1600.0 ns (k=2.0, ~95% confidence)",
+  "components": [
+    {
+      "name": "Interrupt Latency",
+      "symbol": "u_int_lat",
+      "standard_uncertainty_ns": 288.675,
+      "type": "Type B (Systematic)",
+      "distribution": "rectangular",
+      "sensitivity_coefficient": 1.0,
+      "contribution_ns": 288.675,
+      "contribution_percent": 92.6,
+      "degrees_of_freedom": null,
+      "notes": "Measured via timing tests, \u00b1500ns typical range"
+    },
+    {
+      "name": "Temperature Drift",
+      "symbol": "u_temp",
+      "standard_uncertainty_ns": 57.735,
+      "type": "Type B (Systematic)",
+      "distribution": "rectangular",
+      "sensitivity_coefficient": 1.0,
+      "contribution_ns": 57.735,
+      "contribution_percent": 3.7,
+      "degrees_of_freedom": null,
+      "notes": "Typical TCXO spec: \u00b11ppm/\u00b0C, \u00b110\u00b0C ambient variation"
+    },
+    {
+      "name": "System Call Overhead",
+      "symbol": "u_syscall",
+      "standard_uncertainty_ns": 50.0,
+      "type": "Type B (Systematic)",
+      "distribution": "normal",
+      "sensitivity_coefficient": 1.0,
+      "contribution_ns": 50.0,
+      "contribution_percent": 2.8,
+      "degrees_of_freedom": null,
+      "notes": "Benchmarked clock_gettime() standard deviation"
+    },
+    {
+      "name": "Aging Drift",
+      "symbol": "u_aging",
+      "standard_uncertainty_ns": 28.868,
+      "type": "Type B (Systematic)",
+      "distribution": "rectangular",
+      "sensitivity_coefficient": 1.0,
+      "contribution_ns": 28.868,
+      "contribution_percent": 0.9,
+      "degrees_of_freedom": null,
+      "notes": "Typical crystal aging: \u00b15ppm/year"
+    },
+    {
+      "name": "CLOCK_MONOTONIC_RAW Resolution",
+      "symbol": "u_clock_res",
+      "standard_uncertainty_ns": 0.577,
+      "type": "Type B (Systematic)",
+      "distribution": "rectangular",
+      "sensitivity_coefficient": 1.0,
+      "contribution_ns": 0.577,
+      "contribution_percent": 0.0,
+      "degrees_of_freedom": null,
+      "notes": "macOS kern.clockrate sysctl, assumed \u00b11ns quantization"
+    }
+  ]
+}

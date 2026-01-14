@@ -909,3 +909,170 @@ TEST(Perf, MultipleStepSizes) {
     swclock_destroy(clk);
   }
 }
+
+// ============================================================================
+// Measurement Uncertainty Analysis Tests (ISO/IEC Guide 98-3 / GUM)
+// ============================================================================
+//
+// These tests support IEEE Audit Priority 3 Recommendation 13:
+// Quantify measurement uncertainty using GUM methodology
+//
+// Type A Uncertainty: Statistical analysis from repeated measurements
+// Type B Uncertainty: Systematic uncertainties from specifications
+//
+// Purpose:
+// - Characterize measurement repeatability
+// - Generate data for uncertainty_analysis.py tool
+// - Support expanded uncertainty statement: U = ±X ns (k=2, 95% confidence)
+
+TEST(Perf, MeasurementRepeatability) {
+  // Run N identical trials to characterize Type A uncertainty
+  // Each trial: 60s sampling period with ideal reference (CLOCK_MONOTONIC_RAW)
+  // Expected: TE distribution reflects measurement noise, not servo error
+  
+  const int num_trials = 10;
+  const double sample_duration_s = 60.0;
+  const double sample_dt_s = 0.1;  // 10 Hz sampling
+  const int samples_per_trial = static_cast<int>(sample_duration_s / sample_dt_s) + 1;
+  const long long poll_ns = (long long)(sample_dt_s * NS_PER_SEC);
+  
+  // Initialize CSV logger for Type A analysis
+  bool csv_enabled = csv_logging_enabled();
+  TELogger csv_logger("Perf_MeasurementRepeatability");
+  
+  printf("\n");
+  printf("==============================================================================\n");
+  printf("Measurement Repeatability Test - ISO/IEC Guide 98-3 (GUM)\n");
+  printf("==============================================================================\n");
+  printf("\n");
+  printf("Purpose: Characterize Type A measurement uncertainty\n");
+  printf("Method:  %d identical trials, %d samples each\n", num_trials, samples_per_trial);
+  printf("Config:  Ideal reference (CLOCK_MONOTONIC_RAW), no offsets\n");
+  printf("Output:  CSV data for tools/uncertainty_analysis.py\n");
+  printf("\n");
+  
+  // Storage for trial statistics
+  std::vector<double> trial_means_ns;
+  std::vector<double> trial_stds_ns;
+  
+  for (int trial = 0; trial < num_trials; trial++) {
+    printf("Trial %d/%d: ", trial + 1, num_trials);
+    fflush(stdout);
+    
+    // Create SwClock instance
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    
+    // Capture initial reference points
+    struct timespec sw0, raw0;
+    swclock_gettime(clk, CLOCK_REALTIME, &sw0);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &raw0);
+    long long t0_ns = (long long)raw0.tv_sec * NS_PER_SEC + raw0.tv_nsec;
+    
+    // Sample time errors
+    std::vector<long long> te_samples;
+    te_samples.reserve(samples_per_trial);
+    
+    for (int i = 0; i < samples_per_trial; i++) {
+      // Compute time error: SwClock - MONOTONIC_RAW
+      struct timespec sw_now, raw_now;
+      swclock_gettime(clk, CLOCK_REALTIME, &sw_now);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
+      
+      // Calculate elapsed time from both clocks
+      long long sw_elapsed_ns = ((long long)sw_now.tv_sec * NS_PER_SEC + sw_now.tv_nsec) -
+                                 ((long long)sw0.tv_sec * NS_PER_SEC + sw0.tv_nsec);
+      long long raw_elapsed_ns = ((long long)raw_now.tv_sec * NS_PER_SEC + raw_now.tv_nsec) -
+                                  ((long long)raw0.tv_sec * NS_PER_SEC + raw0.tv_nsec);
+      
+      // Time error is the difference
+      long long te_ns = sw_elapsed_ns - raw_elapsed_ns;
+      te_samples.push_back(te_ns);
+      
+      // Log to CSV if enabled
+      if (csv_enabled) {
+        long long timestamp_ns = raw_elapsed_ns;
+        csv_logger.log(timestamp_ns, te_ns);
+      }
+      
+      // Sleep until next sample
+      struct timespec sleep_time = {
+        .tv_sec = poll_ns / NS_PER_SEC,
+        .tv_nsec = poll_ns % NS_PER_SEC
+      };
+      nanosleep(&sleep_time, nullptr);
+      
+      // Poll the servo
+      swclock_poll(clk);
+    }
+    
+    // Compute trial statistics
+    double sum = 0.0;
+    for (auto te : te_samples) {
+      sum += te;
+    }
+    double mean = sum / te_samples.size();
+    
+    double sum_sq = 0.0;
+    for (auto te : te_samples) {
+      double diff = te - mean;
+      sum_sq += diff * diff;
+    }
+    double variance = sum_sq / (te_samples.size() - 1);
+    double std_dev = sqrt(variance);
+    
+    trial_means_ns.push_back(mean);
+    trial_stds_ns.push_back(std_dev);
+    
+    printf("Mean=%.2f ns, StdDev=%.2f ns, Samples=%zu\n", 
+           mean, std_dev, te_samples.size());
+    
+    swclock_destroy(clk);
+  }
+  
+  // Compute inter-trial statistics
+  double mean_of_means = std::accumulate(trial_means_ns.begin(), 
+                                         trial_means_ns.end(), 0.0) / num_trials;
+  
+  double sum_sq_means = 0.0;
+  for (auto m : trial_means_ns) {
+    double diff = m - mean_of_means;
+    sum_sq_means += diff * diff;
+  }
+  double std_of_means = sqrt(sum_sq_means / (num_trials - 1));
+  double type_a_uncertainty = std_of_means / sqrt(num_trials);
+  
+  double mean_of_stds = std::accumulate(trial_stds_ns.begin(), 
+                                        trial_stds_ns.end(), 0.0) / num_trials;
+  
+  printf("\n");
+  printf("==============================================================================\n");
+  printf("Type A Uncertainty Analysis Results\n");
+  printf("==============================================================================\n");
+  printf("\n");
+  printf("Inter-trial statistics:\n");
+  printf("  Mean of trial means:        %.2f ns\n", mean_of_means);
+  printf("  Std dev of trial means:     %.2f ns\n", std_of_means);
+  printf("  Type A uncertainty u(x):    %.2f ns (= σ/√n, n=%d)\n", 
+         type_a_uncertainty, num_trials);
+  printf("\n");
+  printf("Intra-trial statistics:\n");
+  printf("  Mean of trial std devs:     %.2f ns\n", mean_of_stds);
+  printf("\n");
+  
+  // Save CSV if enabled
+  if (csv_enabled) {
+    csv_logger.flush();
+    printf("CSV data exported: %s\n", csv_logger.get_filepath());
+    printf("Run: python3 tools/uncertainty_analysis.py %s\n", csv_logger.get_filepath());
+  }
+  
+  printf("\n");
+  
+  // Expectations: Type A uncertainty should be small (<50ns)
+  // This validates that repeated measurements are consistent
+  EXPECT_LT(type_a_uncertainty, 50.0) 
+    << "Type A uncertainty too large - measurement not repeatable";
+  EXPECT_LT(mean_of_stds, 1000.0)
+    << "Intra-trial variation too large - check system stability";
+}
