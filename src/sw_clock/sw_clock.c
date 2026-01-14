@@ -144,6 +144,14 @@ void swclock_disable_pi_servo(SwClock* c)
     swclock_log_event(c, SWCLOCK_EVENT_PI_DISABLE, NULL, 0);
 }
 
+long long swclock_get_remaining_phase_ns(SwClock* c) {
+    if (!c) return 0;
+    pthread_mutex_lock(&c->lock);
+    long long remaining = c->remaining_phase_ns;
+    pthread_mutex_unlock(&c->lock);
+    return remaining;
+}
+
 // One PI control step. dt_s is the elapsed RAW time since last poll in seconds.
 static void swclock_pi_step(SwClock* c, double dt_s) {
 

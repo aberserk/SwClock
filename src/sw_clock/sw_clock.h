@@ -159,6 +159,13 @@ void     swclock_close_log(SwClock* c);
 void     swclock_disable_pi_servo(SwClock* c);
 
 /**
+ * Get the current remaining phase error being corrected by PI servo.
+ * @param c Pointer to SwClock instance
+ * @return Remaining phase error in nanoseconds (positive or negative)
+ */
+long long swclock_get_remaining_phase_ns(SwClock* c);
+
+/**
  * Start event logging to binary file.
  * @param c Pointer to SwClock instance
  * @param filename Event log file path
