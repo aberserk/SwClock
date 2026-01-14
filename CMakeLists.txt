@@ -99,12 +99,12 @@ else()
 endif()
 
 # Build swclock_event_dump tool
-add_executable(swclock_event_dump tools/swclock_event_dump.c)
+add_executable(swclock_event_dump src-tools/swclock_event_dump.c)
 target_link_libraries(swclock_event_dump PRIVATE swclock)
 target_include_directories(swclock_event_dump PRIVATE src/sw_clock)
 
 # Build monitor_demo tool (Recommendation 7)
-add_executable(monitor_demo tools/monitor_demo.c)
+add_executable(monitor_demo src-tools/monitor_demo.c)
 target_link_libraries(monitor_demo PRIVATE swclock)
 target_include_directories(monitor_demo PRIVATE src/sw_clock)
 
