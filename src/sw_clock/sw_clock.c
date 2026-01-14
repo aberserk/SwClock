@@ -68,6 +68,7 @@ struct SwClock {
     // Logging support
     FILE* log_fp;         // CSV file handle
     bool  is_logging;     // true if logging is active
+    bool  servo_log_enabled;  // true if SWCLOCK_SERVO_LOG was set at creation
     
     // Event logging support (Priority 1 Recommendation 2)
     FILE* event_log_fp;             // Binary event log file
@@ -303,6 +304,10 @@ SwClock* swclock_create(void) {
 
     c->stop_flag           = false;
     c->poll_thread_running = true;
+    
+    // Check if servo CSV logging should be enabled (Priority 1 Recommendation 5)
+    // This flag is checked once per instance at creation time for performance
+    c->servo_log_enabled = (getenv("SWCLOCK_SERVO_LOG") != NULL);
     
     // Initialize event logging fields
     c->event_log_fp = NULL;
@@ -614,13 +619,8 @@ static void* swclock_poll_thread_main(void* arg) {
 
         // Conditional servo state logging (enabled via SWCLOCK_SERVO_LOG env var)
         // NOTE: This logging is for debugging/audit purposes and has minimal overhead
-        // when disabled (single getenv check at thread start)
-        static int servo_log_enabled = -1;
-        if (servo_log_enabled == -1) {
-            servo_log_enabled = (getenv("SWCLOCK_SERVO_LOG") != NULL);
-        }
-        
-        if (servo_log_enabled) {
+        // when disabled (flag checked once at swclock_create time)
+        if (c->servo_log_enabled) {
             pthread_mutex_lock(&c->lock);
             if (c->log_fp && c->is_logging) {
                 swclock_log(c);  // ENABLED: Priority 1 Recommendation 5
@@ -629,7 +629,7 @@ static void* swclock_poll_thread_main(void* arg) {
         }
         
         // JSON-LD ServoStateUpdate logging (independent of CSV logging)
-        if (c->jsonld_logger && servo_log_enabled) {
+        if (c->jsonld_logger && c->servo_log_enabled) {
             pthread_mutex_lock(&c->lock);
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);

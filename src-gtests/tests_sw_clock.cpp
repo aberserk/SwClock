@@ -548,13 +548,17 @@ TEST(SwClockV1, TestLoggingWithAdjTime) {
 
     printf("[] Step 2: Creating log at: %s\n", log_path);
 
-    // --- 2. Create clock instance ---
+    // --- 2. Enable servo CSV logging (MUST be set before swclock_create) ---
+    printf("[] Step 2.5: Enabling servo CSV logging\n");
+    setenv("SWCLOCK_SERVO_LOG", "1", 1);
+
+    // --- 3. Create clock instance ---
     printf("[] Step 3: Creating SwClock instance\n");
     SwClock* clk = swclock_create();
     ASSERT_NE(clk, nullptr);
     printf("[] Step 4: SwClock created successfully\n");
 
-    // --- 3. Start logging ---
+    // --- 4. Start logging ---
     printf("[] Step 5: Starting logging\n");
     swclock_start_log(clk, log_path);
     printf("[] Step 6: Logging started\n");
@@ -636,13 +640,17 @@ TEST(SwClockV1, TestLoggingWithOneAdjustment) {
 
     printf("[] Step 2: Creating log at: %s\n", log_path);
 
-    // --- 2. Create clock instance ---
+    // --- 2. Enable servo CSV logging (MUST be set before swclock_create) ---
+    printf("[] Step 2.5: Enabling servo CSV logging\n");
+    setenv("SWCLOCK_SERVO_LOG", "1", 1);
+
+    // --- 3. Create clock instance ---
     printf("[] Step 3: Creating SwClock instance\n");
     SwClock* clk = swclock_create();
     ASSERT_NE(clk, nullptr);
     printf("[] Step 4: SwClock created successfully\n");
 
-    // --- 3. Start logging ---
+    // --- 4. Start logging ---
     printf("[] Step 5: Starting logging\n");
     swclock_start_log(clk, log_path);
     printf("[] Step 6: Logging started\n");
@@ -694,13 +702,17 @@ TEST(SwClockV1, SmallAdjustment) {
 
     printf("Step 2: Creating log at: %s\n", log_path);
 
-    // --- 2. Create clock instance ---
+    // --- 2. Enable servo CSV logging (MUST be set before swclock_create) ---
+    printf("Step 2.5: Enabling servo CSV logging\n");
+    setenv("SWCLOCK_SERVO_LOG", "1", 1);
+
+    // --- 3. Create clock instance ---
     printf("Step 3: Creating SwClock instance\n");
     SwClock* clk = swclock_create();
     ASSERT_NE(clk, nullptr);
     printf("Step 4: SwClock created successfully\n");
 
-    // --- 3. Start logging ---
+    // --- 4. Start logging ---
     printf("Step 5: Starting logging\n");
     swclock_start_log(clk, log_path);
     printf("Step 6: Logging started\n");
