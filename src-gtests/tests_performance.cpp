@@ -235,7 +235,56 @@ public:
   }
   
   bool is_enabled() const { return enabled; }
+  
+  // Get the CSV filename for validation tool (IEEE Rec 6)
+  const char* get_filepath() const {
+    static char filepath[512];
+    if (!enabled || !metadata.test_name[0]) return nullptr;
+    get_csv_filename(filepath, sizeof(filepath), metadata.test_name);
+    return filepath;
+  }
 };
+
+// Export expected metrics to JSON for independent validation (IEEE Rec 6)
+static inline void export_expected_metrics(const char* csv_filepath, 
+                                           double mean_ns, double std_ns,
+                                           long long mtie_1s, long long mtie_10s, long long mtie_30s,
+                                           double tdev_0p1s, double tdev_1s, double tdev_10s) {
+  if (!csv_filepath) return;
+  
+  // Generate JSON filename from CSV filename
+  char json_filepath[512];
+  snprintf(json_filepath, sizeof(json_filepath), "%s", csv_filepath);
+  
+  // Replace .csv with -expected.json
+  char* ext = strstr(json_filepath, ".csv");
+  if (ext) {
+    strcpy(ext, "-expected.json");
+  } else {
+    strcat(json_filepath, "-expected.json");
+  }
+  
+  FILE* fp = fopen(json_filepath, "w");
+  if (!fp) {
+    fprintf(stderr, "Warning: Failed to export expected metrics to %s\n", json_filepath);
+    return;
+  }
+  
+  fprintf(fp, "{\n");
+  fprintf(fp, "  \"mean_ns\": %.2f,\n", mean_ns);
+  fprintf(fp, "  \"std_ns\": %.2f,\n", std_ns);
+  fprintf(fp, "  \"mtie_1s_ns\": %lld,\n", mtie_1s);
+  fprintf(fp, "  \"mtie_10s_ns\": %lld,\n", mtie_10s);
+  fprintf(fp, "  \"mtie_30s_ns\": %lld,\n", mtie_30s);
+  fprintf(fp, "  \"tdev_0p1s_ns\": %.2f,\n", tdev_0p1s);
+  fprintf(fp, "  \"tdev_1s_ns\": %.2f,\n", tdev_1s);
+  fprintf(fp, "  \"tdev_10s_ns\": %.2f\n", tdev_10s);
+  fprintf(fp, "}\n");
+  
+  fclose(fp);
+  
+  printf("  Exported expected metrics to: %s\n", json_filepath);
+}
 
 
 static inline void sleep_ns_robust(long long ns){
@@ -412,6 +461,14 @@ TEST(Perf, DisciplineTEStats_MTIE_TDEV){
   printf("   TDEV(0.1 s) = %10.1f ns (target < %lld)\n", tdev01, (long long)TARGET_TDEV_0P1S_NS);
   printf("   TDEV(  1 s) = %10.1f ns (target < %lld)\n", tdev1,  (long long)TARGET_TDEV_1S_NS);
   printf("   TDEV( 10 s) = %10.1f ns (target < %lld)\n", tdev10,(long long)TARGET_TDEV_10S_NS);
+
+  // Export expected metrics for independent validation (IEEE Rec 6)
+  if (csv_logger.is_enabled()) {
+    export_expected_metrics(csv_logger.get_filepath(), 
+                           mean, rms,  // Using RMS as std_ns proxy
+                           mtie1, mtie10, mtie30,
+                           tdev01, tdev1, tdev10);
+  }
 
   EXPECT_LE(std::fabs(mean), (double)TARGET_TE_MEAN_ABS_NS);
   EXPECT_LE((double)mtie1,  (double)TARGET_MTIE_1S_NS);
