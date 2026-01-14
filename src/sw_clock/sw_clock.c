@@ -13,6 +13,7 @@
 #include <inttypes.h> // for PRId64
 
 #include "sw_clock.h"
+#include "swclock_jsonld.h"
 
 
 
@@ -78,6 +79,9 @@ struct SwClock {
     
     // Real-time monitoring (Priority 2 Recommendation 7)
     swclock_monitor_t* monitor;     // Monitoring context (NULL if disabled)
+    
+    // JSON-LD structured logging (Priority 2 Recommendation 10)
+    swclock_jsonld_logger_t* jsonld_logger;  // JSON-LD logger (NULL if disabled)
     bool monitoring_enabled;         // Monitoring active flag
 };
 
@@ -187,6 +191,16 @@ static void swclock_pi_step(SwClock* c, double dt_s) {
         .servo_enabled = c->pi_servo_enabled ? 1 : 0
     };
     swclock_log_event(c, SWCLOCK_EVENT_PI_STEP, &pi_payload, sizeof(pi_payload));
+    
+    // JSON-LD logging
+    if (c->jsonld_logger) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+        swclock_jsonld_log_pi_update(c->jsonld_logger, timestamp_ns,
+            SWCLOCK_PI_KP_PPM_PER_S, SWCLOCK_PI_KI_PPM_PER_S2,
+            err_s, c->pi_freq_ppm, c->pi_int_error_s);
+    }
 
     // Anti-windup: if close enough, zero everything
     if (llabs(c->remaining_phase_ns) <= SWCLOCK_PHASE_EPS_NS) {
@@ -300,6 +314,29 @@ SwClock* swclock_create(void) {
     // Initialize monitoring fields (Rec 7)
     c->monitor = NULL;
     c->monitoring_enabled = false;
+    
+    // Initialize JSON-LD structured logging (Rec 10)
+    c->jsonld_logger = NULL;
+    const char* enable_jsonld = getenv("SWCLOCK_JSONLD");
+    if (enable_jsonld && atoi(enable_jsonld) == 1) {
+        swclock_log_rotation_t rotation = {
+            .enabled = true,
+            .max_size_mb = 100,
+            .max_age_hours = 168,  // 7 days
+            .max_files = 10,
+            .compress = true
+        };
+        c->jsonld_logger = swclock_jsonld_init("logs/swclock.jsonl", &rotation, NULL);
+        if (c->jsonld_logger) {
+            // Log system startup event
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            char details[256];
+            snprintf(details, sizeof(details), "{\"version\":\"%s\"}", SWCLOCK_VERSION);
+            swclock_jsonld_log_system(c->jsonld_logger, timestamp_ns, "swclock_start", details);
+        }
+    }
 
     if (pthread_create(&c->poll_thread, NULL, swclock_poll_thread_main, c) != 0) {
         c->poll_thread_running = false;
@@ -327,6 +364,16 @@ void swclock_destroy(SwClock* c) {
         // Disable monitoring
         if (c->monitoring_enabled) {
             swclock_enable_monitoring(c, false);
+        }
+        
+        // Close JSON-LD logger
+        if (c->jsonld_logger) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            swclock_jsonld_log_system(c->jsonld_logger, timestamp_ns, "swclock_stop", "{}");
+            swclock_jsonld_close(c->jsonld_logger);
+            c->jsonld_logger = NULL;
         }
     }
     
@@ -404,6 +451,15 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
     /* Base frequency bias (Darwin uses same scaled units: ppm * 2^-16) */
     if (modes & ADJ_FREQUENCY) {
         c->freq_scaled_ppm = tptr->freq;
+        
+        // JSON-LD logging
+        if (c->jsonld_logger) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            swclock_jsonld_log_adjustment(c->jsonld_logger, timestamp_ns,
+                "frequency_adjust", scaledppm_to_ppm(tptr->freq), 0, 0);
+        }
     }
 
     /* ADJ_OFFSET: SLEW the phase via PI (no immediate step) */
@@ -414,9 +470,19 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
         } else {
             delta_ns = (long long)tptr->offset * 1000LL; // usec -> ns
         }
+        long long before_phase = c->remaining_phase_ns;
         c->remaining_phase_ns += delta_ns;               // PI will work this down
         c->pi_int_error_s = 0.0;
         c->pi_freq_ppm    = 0.0;
+        
+        // JSON-LD logging
+        if (c->jsonld_logger) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            swclock_jsonld_log_adjustment(c->jsonld_logger, timestamp_ns,
+                "slew", delta_ns / 1000000000.0, before_phase, c->remaining_phase_ns);
+        }
     }
 
     /* ADJ_SETOFFSET: RELATIVE STEP (immediate)
@@ -441,6 +507,15 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
         } else
         #endif
         {
+        
+        // JSON-LD logging
+        if (c->jsonld_logger) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            swclock_jsonld_log_adjustment(c->jsonld_logger, timestamp_ns,
+                "phase_step", delta_ns / 1000000000.0, -delta_ns, 0);
+        }
             /* Fallback: treat 'offset' as relative step */
             if (modes & ADJ_NANO) {
                 delta_ns = (long long)tptr->offset;          // ns
@@ -730,6 +805,27 @@ void swclock_log(SwClock* c) {
         c->tai);
 
     fflush(c->log_fp);
+    
+    // JSON-LD servo state logging
+    if (c->jsonld_logger) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+        
+        // Calculate phase and time errors for the log
+        int64_t phase_error_ns = c->remaining_phase_ns;
+        // Time error: compare system REALTIME to SwClock REALTIME
+        struct timespec sys_realtime, sw_realtime;
+        clock_gettime(CLOCK_REALTIME, &sys_realtime);
+        swclock_gettime(c, CLOCK_REALTIME, &sw_realtime);
+        int64_t time_error_ns = ts_to_ns(&sys_realtime) - ts_to_ns(&sw_realtime);
+        
+        swclock_jsonld_log_servo(c->jsonld_logger, timestamp_ns,
+            scaledppm_to_ppm(c->freq_scaled_ppm),
+            phase_error_ns, time_error_ns,
+            c->pi_freq_ppm, c->pi_int_error_s,
+            c->pi_servo_enabled);
+    }
 }
 
 void swclock_close_log(SwClock* c) {

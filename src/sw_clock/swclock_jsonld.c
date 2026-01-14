@@ -375,11 +375,11 @@ int swclock_jsonld_log_system(
 
     char entry[SWCLOCK_JSONLD_MAX_SIZE];
     char ts_buf[64];
-    char escaped_type[128], escaped_details[2048];
+    char escaped_type[128];
     
     format_iso8601_ns(timestamp_mono_ns, ts_buf, sizeof(ts_buf));
     json_escape_string(event_type, escaped_type, sizeof(escaped_type));
-    json_escape_string(details_json ? details_json : "{}", escaped_details, sizeof(escaped_details));
+    // details_json is already JSON, don't escape it
 
     snprintf(entry, sizeof(entry),
         "{"
@@ -395,7 +395,7 @@ int swclock_jsonld_log_system(
         ts_buf,
         (unsigned long long)timestamp_mono_ns,
         escaped_type,
-        escaped_details);
+        details_json ? details_json : "{}");
 
     return write_jsonld_entry(logger, entry);
 }
@@ -502,13 +502,13 @@ int swclock_jsonld_log_test(
 
     char entry[SWCLOCK_JSONLD_MAX_SIZE];
     char ts_buf[64];
-    char escaped_test[256], escaped_status[64], escaped_csv[512], escaped_metrics[2048];
+    char escaped_test[256], escaped_status[64], escaped_csv[512];
     
     format_iso8601_ns(timestamp_mono_ns, ts_buf, sizeof(ts_buf));
     json_escape_string(test_name, escaped_test, sizeof(escaped_test));
     json_escape_string(status, escaped_status, sizeof(escaped_status));
     json_escape_string(csv_file ? csv_file : "", escaped_csv, sizeof(escaped_csv));
-    json_escape_string(metrics_json ? metrics_json : "{}", escaped_metrics, sizeof(escaped_metrics));
+    // metrics_json is already JSON, don't escape it
 
     snprintf(entry, sizeof(entry),
         "{"
@@ -534,7 +534,7 @@ int swclock_jsonld_log_test(
         escaped_status,
         duration_ms,
         escaped_csv,
-        escaped_metrics,
+        metrics_json ? metrics_json : "{}",
         verified ? "true" : "false",
         max_error_percent);
 
