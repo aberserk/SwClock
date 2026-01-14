@@ -29,6 +29,7 @@ set(SWCLOCK_SOURCES
     src/sw_clock/sw_clock_events.c
     src/sw_clock/sw_clock_ringbuf.c
     src/sw_clock/sw_clock_monitor.c
+    src/sw_clock/swclock_jsonld.c
 )
 
 set(SWCLOCK_HEADERS
@@ -37,6 +38,7 @@ set(SWCLOCK_HEADERS
     src/sw_clock/sw_clock_events.h
     src/sw_clock/sw_clock_ringbuf.h
     src/sw_clock/sw_clock_monitor.h
+    src/sw_clock/swclock_jsonld.h
 )
 
 
@@ -52,6 +54,10 @@ find_library(MATH_LIBRARY m)
 if(MATH_LIBRARY)
     target_link_libraries(swclock ${MATH_LIBRARY})
 endif()
+
+# Link zlib for JSON-LD log compression
+find_package(ZLIB REQUIRED)
+target_link_libraries(swclock ZLIB::ZLIB)
 
 
 # Enable testing and find GTest

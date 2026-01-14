@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/swclock/schemas/swclock-log-v1.0.0.json",
+  "title": "SwClock Interchange Format (SIF)",
+  "description": "JSON-LD schema for SwClock timing system logs with IEEE 1588 compliance",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["@context", "@type", "timestamp", "event"],
+  
+  "properties": {
+    "@context": {
+      "type": "object",
+      "description": "JSON-LD context defining namespaces and semantic mappings",
+      "properties": {
+        "@vocab": {
+          "type": "string",
+          "const": "https://swclock.org/vocab#"
+        },
+        "ieee1588": {
+          "type": "string",
+          "const": "https://standards.ieee.org/1588/vocab#"
+        },
+        "xsd": {
+          "type": "string",
+          "const": "http://www.w3.org/2001/XMLSchema#"
+        },
+        "units": {
+          "type": "string",
+          "const": "http://qudt.org/vocab/unit#"
+        }
+      },
+      "required": ["@vocab", "ieee1588"]
+    },
+    
+    "@type": {
+      "type": "string",
+      "description": "Event type classification",
+      "enum": [
+        "ServoStateUpdate",
+        "TimeAdjustment",
+        "PIUpdate",
+        "ThresholdAlert",
+        "SystemEvent",
+        "MetricsSnapshot",
+        "TestResult"
+      ]
+    },
+    
+    "timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp with nanosecond precision",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{9}Z$",
+      "examples": ["2026-01-13T18:30:45.123456789Z"]
+    },
+    
+    "timestamp_monotonic_ns": {
+      "type": "integer",
+      "description": "CLOCK_MONOTONIC_RAW timestamp in nanoseconds since boot",
+      "minimum": 0
+    },
+    
+    "event": {
+      "type": "object",
+      "description": "Event-specific data payload",
+      "oneOf": [
+        {"$ref": "#/$defs/ServoStateUpdate"},
+        {"$ref": "#/$defs/TimeAdjustment"},
+        {"$ref": "#/$defs/PIUpdate"},
+        {"$ref": "#/$defs/ThresholdAlert"},
+        {"$ref": "#/$defs/SystemEvent"},
+        {"$ref": "#/$defs/MetricsSnapshot"},
+        {"$ref": "#/$defs/TestResult"}
+      ]
+    },
+    
+    "system": {
+      "type": "object",
+      "description": "System context information",
+      "properties": {
+        "hostname": {"type": "string"},
+        "os": {"type": "string"},
+        "kernel": {"type": "string"},
+        "arch": {"type": "string"},
+        "swclock_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"}
+      }
+    }
+  },
+  
+  "$defs": {
+    "ServoStateUpdate": {
+      "type": "object",
+      "description": "Periodic servo state snapshot",
+      "required": ["freq_ppm", "phase_error_ns", "time_error_ns"],
+      "properties": {
+        "freq_ppm": {
+          "type": "number",
+          "description": "Frequency offset in parts per million",
+          "units": "ppm"
+        },
+        "phase_error_ns": {
+          "type": "integer",
+          "description": "Phase error in nanoseconds",
+          "units": "ns"
+        },
+        "time_error_ns": {
+          "type": "integer",
+          "description": "Time error in nanoseconds",
+          "units": "ns"
+        },
+        "pi_freq_ppm": {
+          "type": "number",
+          "description": "PI controller frequency output"
+        },
+        "pi_int_error_s": {
+          "type": "number",
+          "description": "PI controller integral error in seconds"
+        },
+        "servo_enabled": {
+          "type": "boolean",
+          "description": "Whether PI servo is active"
+        }
+      }
+    },
+    
+    "TimeAdjustment": {
+      "type": "object",
+      "description": "Clock adjustment event (adjtime/adjfreq)",
+      "required": ["adjustment_type", "value"],
+      "properties": {
+        "adjustment_type": {
+          "type": "string",
+          "enum": ["phase_step", "frequency_adjust", "slew"]
+        },
+        "value": {
+          "type": "number",
+          "description": "Adjustment magnitude (ns for phase, ppm for frequency)"
+        },
+        "before_offset_ns": {"type": "integer"},
+        "after_offset_ns": {"type": "integer"},
+        "max_error_us": {"type": "number"}
+      }
+    },
+    
+    "PIUpdate": {
+      "type": "object",
+      "description": "PI controller update cycle",
+      "required": ["kp", "ki", "error_s", "output_ppm"],
+      "properties": {
+        "kp": {"type": "number", "description": "Proportional gain (ppm/s)"},
+        "ki": {"type": "number", "description": "Integral gain (ppm/s²)"},
+        "error_s": {"type": "number", "description": "Input error (seconds)"},
+        "output_ppm": {"type": "number", "description": "Frequency correction (ppm)"},
+        "integral_state": {"type": "number", "description": "Integral accumulator"}
+      }
+    },
+    
+    "ThresholdAlert": {
+      "type": "object",
+      "description": "Monitoring threshold violation",
+      "required": ["metric", "value", "threshold", "severity"],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "enum": ["mtie_1s", "mtie_10s", "tdev_1s", "max_te", "mean_te", "std_te"]
+        },
+        "value": {"type": "number", "units": "ns"},
+        "threshold": {"type": "number", "units": "ns"},
+        "severity": {
+          "type": "string",
+          "enum": ["warning", "critical"]
+        },
+        "standard": {
+          "type": "string",
+          "description": "Violated standard",
+          "examples": ["ITU-T G.8260 Class C"]
+        }
+      }
+    },
+    
+    "SystemEvent": {
+      "type": "object",
+      "description": "System lifecycle events",
+      "required": ["event_type"],
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "enum": ["swclock_start", "swclock_stop", "monitoring_enabled", 
+                   "monitoring_disabled", "log_rotation"]
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    
+    "MetricsSnapshot": {
+      "type": "object",
+      "description": "Real-time monitoring metrics (IEEE 1588/ITU-T compliance)",
+      "required": ["sample_count", "window_duration_s", "te_stats", "mtie", "tdev"],
+      "properties": {
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "window_duration_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "te_stats": {
+          "type": "object",
+          "required": ["mean_ns", "std_ns", "min_ns", "max_ns", "p95_ns", "p99_ns"],
+          "properties": {
+            "mean_ns": {"type": "number"},
+            "std_ns": {"type": "number"},
+            "min_ns": {"type": "number"},
+            "max_ns": {"type": "number"},
+            "p95_ns": {"type": "number"},
+            "p99_ns": {"type": "number"}
+          }
+        },
+        "mtie": {
+          "type": "object",
+          "description": "Maximum Time Interval Error (IEEE 1588)",
+          "required": ["1s_ns", "10s_ns", "30s_ns", "60s_ns"],
+          "properties": {
+            "1s_ns": {"type": "number"},
+            "10s_ns": {"type": "number"},
+            "30s_ns": {"type": "number"},
+            "60s_ns": {"type": "number"}
+          }
+        },
+        "tdev": {
+          "type": "object",
+          "description": "Time Deviation (ITU-T G.810)",
+          "required": ["0.1s_ns", "1s_ns", "10s_ns"],
+          "properties": {
+            "0.1s_ns": {"type": "number"},
+            "1s_ns": {"type": "number"},
+            "10s_ns": {"type": "number"}
+          }
+        },
+        "compliance": {
+          "type": "object",
+          "description": "Standards compliance status",
+          "properties": {
+            "itu_g8260_class_c": {
+              "type": "object",
+              "properties": {
+                "mtie_1s_pass": {"type": "boolean"},
+                "mtie_10s_pass": {"type": "boolean"},
+                "tdev_1s_pass": {"type": "boolean"},
+                "overall_pass": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+    
+    "TestResult": {
+      "type": "object",
+      "description": "Performance test result with validation data",
+      "required": ["test_name", "status", "metrics"],
+      "properties": {
+        "test_name": {"type": "string"},
+        "status": {
+          "type": "string",
+          "enum": ["PASSED", "FAILED", "SKIPPED", "TIMEOUT"]
+        },
+        "duration_ms": {"type": "number"},
+        "csv_file": {"type": "string", "description": "Path to raw CSV data"},
+        "metrics": {
+          "type": "object",
+          "description": "Computed metrics from test run",
+          "additionalProperties": {"type": "number"}
+        },
+        "validation": {
+          "type": "object",
+          "description": "Independent validation results (Rec 6)",
+          "properties": {
+            "verified": {"type": "boolean"},
+            "max_error_percent": {"type": "number"},
+            "discrepancies": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    }
+  }
+}
