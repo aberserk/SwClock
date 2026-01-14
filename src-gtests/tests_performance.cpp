@@ -293,6 +293,9 @@ static inline void sleep_ns_robust(long long ns){
   while (nanosleep(&rq,nullptr)==-1 && errno==EINTR){}
 }
 
+// Alias for compatibility
+#define sleep_ns sleep_ns_robust
+
 // Return TE (ns) = (SW - SW0) - (RAW - RAW0)
 static inline long long TE_now_SWvsRAW(SwClock* clk, const struct timespec& sw0, const struct timespec& raw0){
   struct timespec sw, rr;
@@ -931,27 +934,25 @@ TEST(Perf, StepResponseConsistency) {
   printf("  ✓ Servo response is consistent across step sizes\n");
 }
 
-// DISABLED: Test uncovered bug in remaining_phase_ns bookkeeping (lines 121-131 of sw_clock.c)
-// The sign logic prevents PI corrections from reducing remaining_phase_ns when signs mismatch
-// TODO: Fix swclock_rebase_now_and_update() phase reduction logic
-TEST(Perf, DISABLED_ServoSlewPerformance) {
+// Test PI servo slew rate performance across different offset magnitudes
+TEST(Perf, ServoSlewPerformance) {
   printf("\n=== Servo Slew Performance (Multiple Offset Sizes) ===\n");
   printf("Purpose: Validate PI servo slews phase offsets at correct rate\n");
   printf("Method:  Apply slewed offsets, measure completion time vs expected\n\n");
 
   struct SlewTest {
     double offset_ms;
-    double expected_time_s;  // Based on ~200 ppm max slew rate + PI ramp-up
+    double expected_time_s;  // Based on PI servo dynamics with ramp-up
     double time_tolerance_s;
   };
 
-  // PI servo ramps up gradually, so actual time > theoretical minimum
-  // Theoretical: offset_ms / (200ppm/1000) = offset_ms * 5
-  // Actual: ~2-3x longer due to PI ramp-up
+  // PI servo uses Kp=200 ppm/s with 100 ppm minimum slew rate for small offsets
+  // Small offsets will slew at 100 ppm minimum
+  // time = offset_ms / (100/1e6) / 1000 = offset_ms * 10
   SlewTest tests[] = {
-    {0.5,   5.0,  2.0},   // 0.5ms: theoretical 2.5s, allow up to 7s
-    {1.0,   10.0, 3.0},   // 1ms: theoretical 5s, allow up to 13s
-    {2.0,   15.0, 5.0},   // 2ms: theoretical 10s, allow up to 20s
+    {0.5,   5.0,  2.0},   // 0.5ms @ 100 ppm = 5s
+    {1.0,   10.0, 3.0},   // 1.0ms @ 100 ppm = 10s
+    {2.0,   20.0, 5.0},   // 2.0ms @ 100 ppm = 20s
   };
 
   for (const auto& test : tests) {
@@ -993,9 +994,8 @@ TEST(Perf, DISABLED_ServoSlewPerformance) {
       clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
       long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
       
-      // Trigger rebase by calling gettime (applies PI corrections)
-      struct timespec sw_dummy;
-      swclock_gettime(clk, CLOCK_REALTIME, &sw_dummy);
+      // Poll the servo (updates PI controller and applies corrections)
+      swclock_poll(clk);
       
       // Read remaining phase directly
       long long remaining = swclock_get_remaining_phase_ns(clk);

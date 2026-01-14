@@ -121,11 +121,9 @@ static void swclock_rebase_now_and_update(SwClock* c) {
         if (llabs(c->remaining_phase_ns) <= llabs(applied_phase_ns)) {
             c->remaining_phase_ns = 0;
         } else {
-            // Sign-aware subtraction
-            if (c->remaining_phase_ns > 0)
-                c->remaining_phase_ns -= (applied_phase_ns > 0 ? applied_phase_ns : 0);
-            else
-                c->remaining_phase_ns += (applied_phase_ns < 0 ? applied_phase_ns : 0);
+            // Subtract the applied correction from remaining, regardless of sign
+            // The PI servo generates corrections opposite to the error, so this reduces the magnitude
+            c->remaining_phase_ns -= applied_phase_ns;
         }
     }
 
@@ -168,6 +166,16 @@ static void swclock_pi_step(SwClock* c, double dt_s) {
 
     // PI output in ppm
     double u_ppm = (SWCLOCK_PI_KP_PPM_PER_S * err_s) + (SWCLOCK_PI_KI_PPM_PER_S2 * c->pi_int_error_s);
+
+    // For active slewing (remaining_phase_ns != 0), ensure minimum slew rate
+    // to avoid excessive settling time for very small offsets
+    // Only apply if PI output is below minimum AND offset is small enough
+    if (c->remaining_phase_ns != 0 && fabs(err_s) < 0.01) {  // < 10ms offset
+        const double MIN_SLEW_PPM = 100.0;  // Minimum slew rate for ADJ_OFFSET
+        if (fabs(u_ppm) < MIN_SLEW_PPM) {
+            u_ppm = (c->remaining_phase_ns > 0) ? MIN_SLEW_PPM : -MIN_SLEW_PPM;
+        }
+    }
 
     // Clamp
     bool clamped = false;
