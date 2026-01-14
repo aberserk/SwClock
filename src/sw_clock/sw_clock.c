@@ -460,11 +460,21 @@ static void* swclock_poll_thread_main(void* arg) {
 
         swclock_poll(c);
 
-        pthread_mutex_lock(&c->lock);
-        if (c->log_fp && c->is_logging) {
-            //swclock_log(c);
+        // Conditional servo state logging (enabled via SWCLOCK_SERVO_LOG env var)
+        // NOTE: This logging is for debugging/audit purposes and has minimal overhead
+        // when disabled (single getenv check at thread start)
+        static int servo_log_enabled = -1;
+        if (servo_log_enabled == -1) {
+            servo_log_enabled = (getenv("SWCLOCK_SERVO_LOG") != NULL);
         }
-        pthread_mutex_unlock(&c->lock);
+        
+        if (servo_log_enabled) {
+            pthread_mutex_lock(&c->lock);
+            if (c->log_fp && c->is_logging) {
+                swclock_log(c);  // ENABLED: Priority 1 Recommendation 5
+            }
+            pthread_mutex_unlock(&c->lock);
+        }
     }
     return NULL;
 }

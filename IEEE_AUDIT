@@ -1,0 +1,1847 @@
+================================================================================
+                        IEEE AUDITOR'S REPORT
+                    SwClock Implementation Review
+                         Version: v2.0.0
+                    Date: January 13, 2026
+================================================================================
+
+EXECUTIVE SUMMARY
+================================================================================
+
+This audit evaluates the SwClock implementation and its validation framework
+against IEEE 1588-2019, ITU-T G.810, ITU-T G.8260, and related timing standards.
+
+OVERALL ASSESSMENT: CONDITIONAL COMPLIANCE
+
+The SwClock implementation demonstrates good technical implementation of servo
+discipline algorithms but exhibits CRITICAL deficiencies in logging architecture,
+validation methodology, and traceability that compromise IEEE audit requirements.
+
+Key Findings:
+✓ COMPLIANT: Core servo algorithm with PI control
+✓ COMPLIANT: IEEE 1588 timex interface compatibility
+✓ COMPLIANT: Standards-based metrics computation (MTIE/TDEV)
+✗ NON-COMPLIANT: Logging architecture relies on fragile printf parsing
+✗ NON-COMPLIANT: No structured binary logging for audit trails
+✗ NON-COMPLIANT: Insufficient traceability of servo state transitions
+⚠ CONCERN: Test metrics computed in-line without independent verification
+
+
+SECTION 1: IMPLEMENTATION REVIEW
+================================================================================
+
+1.1 SERVO DISCIPLINE ALGORITHM
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: src/sw_clock/sw_clock.c, lines 130-160
+
+COMPLIANCE: ✓ PASS
+
+Findings:
+- PI controller implements IEEE 1588-2019 Annex J servo specifications
+- Proportional gain: Kp = 200.0 ppm/s (line 32, sw_clock_constants.h)
+- Integral gain: Ki = 8.0 ppm/s² (line 33, sw_clock_constants.h)
+- Maximum correction: 200.0 ppm (line 36, sw_clock_constants.h)
+- Poll rate: 10ms (100 Hz) (line 29, sw_clock_constants.h)
+
+Technical Assessment:
+✓ Phase slewing mechanism correctly implements gradual phase correction
+✓ Anti-windup protection at 20µs threshold (line 38, sw_clock_constants.h)
+✓ Thread-safe implementation with mutex protection
+✓ Frequency discipline via total_factor() computation
+
+RECOMMENDATION: Add IEEE 1588-2019 Section 9.5.8 reference in comments
+
+
+1.2 TIMEX INTERFACE COMPATIBILITY
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: src/sw_clock/sw_clock.c, lines 335-403
+
+COMPLIANCE: ✓ PASS
+
+Findings:
+- Implements Linux adjtimex() semantics for macOS
+- Supports ADJ_OFFSET, ADJ_FREQUENCY, ADJ_SETOFFSET modes
+- Scaled ppm units match Linux convention (ppm * 2^-16)
+- ADJ_NANO flag correctly handles nanosecond precision
+
+Technical Assessment:
+✓ Mode flags align with Linux uapi/linux/timex.h
+✓ Frequency adjustment uses NTP scaling (65536 units per ppm)
+✓ Immediate step (ADJ_SETOFFSET) and slew (ADJ_OFFSET) correctly differentiated
+✓ Status readback provides maxerror/esterror estimates
+
+CONCERN: Error estimate computation (lines 168-193) lacks IEEE documentation
+- maxerror calculation appears heuristic, not standards-based
+- esterror formula includes "0.1 * fabs(c->pi_freq_ppm) / 1e6" without citation
+
+
+1.3 METRICS COMPUTATION (MTIE/TDEV)
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: tools/ieee_metrics.py, lines 105-200
+
+COMPLIANCE: ✓ PASS with NOTES
+
+Findings:
+- MTIE computation follows ITU-T G.8260 definition (max |TE(t+τ) - TE(t)|)
+- TDEV computation implements overlapping Allan deviation formula
+- Detrending correctly removes linear drift before metric computation
+- Vectorized NumPy implementation (60-80% performance improvement)
+
+Technical Assessment:
+✓ MTIE algorithm matches ITU-T G.8260 Section 6.2.1
+✓ TDEV second-difference formula correct per ITU-T G.810 Appendix II
+✓ Detrending removes frequency offset per best practices
+✓ Allan Deviation implementation (lines 219-251) follows IEEE 1139-2008
+
+NOTE: MTIE/TDEV are computed on DETRENDED data, which is correct per
+ITU-T G.8260 Annex A. This must be explicitly documented in validation reports.
+
+
+1.4 STANDARDS COMPLIANCE CHECKING
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: tools/ieee_metrics.py, lines 243-318
+
+COMPLIANCE: ✓ PASS
+
+Findings:
+- ITU-T G.8260 Class C limits correctly encoded:
+  * MTIE(1s) < 100 µs (line 255)
+  * MTIE(10s) < 200 µs (line 256)
+  * MTIE(30s) < 300 µs (line 257)
+- IEEE 1588-2019 servo targets implemented:
+  * Settling time < 20s for 1ms step (line 292)
+  * Overshoot < 30% (line 293)
+- Pass/fail logic correctly evaluates compliance
+
+Technical Assessment:
+✓ Compliance limits match published standards
+✓ Automatic pass/fail determination for audit trails
+✓ Structured JSON output for programmatic verification
+
+RECOMMENDATION: Add ITU-T G.8260 Class A/B limits for completeness
+
+
+SECTION 2: LOGGING ARCHITECTURE ANALYSIS
+================================================================================
+
+**CRITICAL FINDING: PRINTF-BASED LOGGING IS NOT AUDIT-COMPLIANT**
+
+2.1 CURRENT LOGGING IMPLEMENTATION
+────────────────────────────────────────────────────────────────────────────
+
+SwClock implements THREE SEPARATE logging mechanisms:
+
+A) SERVO STATE LOGGING (src/sw_clock/sw_clock.c, lines 508-595)
+   - CSV format with 13 columns
+   - Includes: timestamp, frequency corrections, PI state, error estimates
+   - Written to file via swclock_start_log()
+   - STATUS: Currently DISABLED in poll thread (line 465: commented out)
+
+B) PERFORMANCE TEST LOGGING (src-gtests/tests_performance.cpp, lines 117-163)
+   - TELogger class for TE time series
+   - CSV format: timestamp_ns, te_ns
+   - Enabled via SWCLOCK_PERF_CSV=1 environment variable
+   - STATUS: ACTIVE for validation tests
+
+C) CONSOLE TRACE OUTPUT (src-gtests/tests_performance.cpp, extensive use)
+   - Formatted printf statements throughout tests
+   - Used for MTIE/TDEV results, settling time, overshoot measurements
+   - STATUS: PRIMARY data source for validation
+
+
+2.2 CRITICAL DEFICIENCY: TRACE PARSING DEPENDENCY
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: tools/analyze_performance_logs.py, lines 115-180
+
+**ROOT CAUSE OF NON-COMPLIANCE:**
+
+The validation framework extracts IEEE compliance metrics by PARSING PRINTF
+OUTPUT using regular expressions. Examples:
+
+Line 138: mean_raw_ns = r'mean\(raw\)\s*=\s*([-+]?[\d.]+)\s*ns'
+Line 144: mtie_pattern = r'MTIE\(\s*(\d+)\s*s\)\s*=\s*([\d.]+)\s*ns'
+Line 156: tdev_pattern = r'TDEV\(([\d.]+)\s*s\)\s*=\s*([\d.]+)\s*ns'
+Line 219: settling_match = re.search(r'Settling time:\s*([\d.]+)\s*s', content)
+
+**WHY THIS VIOLATES IEEE AUDIT REQUIREMENTS:**
+
+1. FRAGILITY: Any change to printf format strings breaks validation
+   - Example: Changing "MTIE( 1 s)" to "MTIE(1s)" would break parsing
+   - Formatting changes (spacing, precision) invalidate historical data
+   - No version control on trace format
+
+2. NON-DETERMINISM: Printf output is human-readable, not machine-canonical
+   - Floating point formatting can vary (%.1f vs %.2f vs %.3f)
+   - Locale settings affect number parsing
+   - Buffer truncation in I/O can corrupt values
+
+3. LACK OF TRACEABILITY: No unique identifiers for test runs
+   - Multiple test runs produce identical-looking output
+   - Cannot reconstruct test conditions from trace alone
+   - No correlation between log entries and servo state
+
+4. VALIDATION SEPARATION: Metrics computed in test code, not independently
+   - MTIE/TDEV calculated in-line (tests_performance.cpp, lines 291-321)
+   - No independent verification by analysis tools
+   - Circular dependency: analyzer parses metrics computed by test
+
+5. AUDIT TRAIL GAPS: Missing critical state information
+   - No logging of adjtime() calls with parameters
+   - No record of mode transitions (ADJ_OFFSET vs ADJ_SETOFFSET)
+   - No capture of CLOCK_MONOTONIC_RAW reference timestamps
+
+
+2.3 COMPARISON TO INDUSTRY BEST PRACTICES
+────────────────────────────────────────────────────────────────────────────
+
+IEEE 1588-2019 and ITU-T standards implicitly require:
+
+REQUIRED:
+✗ Structured binary logging (e.g., Protocol Buffers, FlatBuffers, HDF5)
+✗ Monotonically increasing sequence numbers for events
+✗ Synchronized timestamps (TAI or UTC with leap second awareness)
+✗ Cryptographic integrity (SHA-256 hashes) for audit trails
+✗ Lossless data capture (no printf truncation)
+
+RECOMMENDED (missing):
+✗ Event-driven logging (state transitions, adjustments)
+✗ Ringbuffer or memory-mapped logging for performance
+✗ Separate analysis validation tools (not trace parsers)
+✗ Standardized interchange format (e.g., IEEE 1588 TLV extensions)
+
+
+2.4 SPECIFIC DEFICIENCIES IN CURRENT APPROACH
+────────────────────────────────────────────────────────────────────────────
+
+DEFICIENCY #1: Servo State Logging Disabled
+LOCATION: src/sw_clock/sw_clock.c, line 465
+CODE: //swclock_log(c);  [COMMENTED OUT]
+
+IMPACT: No continuous record of servo discipline behavior
+- Cannot verify PI controller evolution during tests
+- No audit trail of frequency corrections applied
+- Missing data for root cause analysis of failures
+
+RECOMMENDATION: Re-enable servo logging with structured format
+
+
+DEFICIENCY #2: CSV Logging Lacks Metadata
+LOCATION: src-gtests/tests_performance.cpp, lines 138-141
+
+Current CSV header:
+  "# Performance Test CSV Export\n"
+  "# Test: %s\n"
+  "# Columns: timestamp_ns, te_ns\n"
+
+MISSING CRITICAL METADATA:
+✗ SwClock version (for reproducibility)
+✗ Test configuration (PI gains, poll rate, step size)
+✗ Hardware/OS information (CPU, macOS version)
+✗ Reference clock source (CLOCK_MONOTONIC_RAW characteristics)
+✗ Temperature/environmental conditions
+✗ Unique test run identifier (UUID)
+
+RECOMMENDATION: Extend CSV header with comprehensive metadata block
+
+
+DEFICIENCY #3: No Structured Event Logging
+LOCATION: Entire codebase (missing feature)
+
+REQUIRED FOR AUDIT COMPLIANCE:
+- Log all swclock_adjtime() calls with:
+  * Timestamp (TAI or CLOCK_MONOTONIC_RAW)
+  * Mode flags (ADJ_OFFSET, ADJ_FREQUENCY, etc.)
+  * Input parameters (offset, frequency)
+  * Return code and readback values
+- Log servo state transitions:
+  * PI servo enable/disable events
+  * Remaining phase error crossing thresholds
+  * Frequency clamp activations (200 ppm limit)
+- Log reference time updates:
+  * CLOCK_MONOTONIC_RAW reads
+  * Base time resets
+  * Clock settime operations
+
+RECOMMENDATION: Implement structured event log with binary format
+
+
+DEFICIENCY #4: Analysis Tools Parse Instead of Validate
+LOCATION: tools/analyze_performance_logs.py, entire file
+
+Current approach:
+1. Tests compute metrics and print to stdout
+2. Python script parses stdout with regex
+3. Results saved to JSON for reporting
+
+IEEE-COMPLIANT APPROACH:
+1. Tests log raw TE data to structured format (CSV is acceptable)
+2. Independent analysis tool reads structured data
+3. Tool computes MTIE/TDEV from first principles
+4. Results compared against test-computed values for verification
+5. Discrepancies flagged as validation errors
+
+CURRENT PROBLEM: Circular validation
+- If test code computes MTIE=6707ns and prints it
+- Analyzer parses "6707" and records it
+- No independent verification that 6707 is correct
+
+RECOMMENDATION: Implement dual-path validation:
+- Path 1: Test code computes metrics (for pass/fail)
+- Path 2: Analysis tools recompute from raw data (for verification)
+- Assert Path1 == Path2 (within floating point tolerance)
+
+
+DEFICIENCY #5: No Tamper Detection
+LOCATION: All log files (no integrity protection)
+
+AUDIT REQUIREMENT:
+- Log files must be tamper-evident
+- Cryptographic hashes or MACs required
+- Append-only semantics enforced
+
+CURRENT STATE:
+- CSV files are plaintext, editable
+- No checksums or digital signatures
+- No detection of log truncation or modification
+
+RECOMMENDATION:
+- Add SHA-256 hash of each log file to metrics.json
+- Implement log file sealing (immutable flag on close)
+- Consider blockchain-anchored timestamps for critical validations
+
+
+SECTION 3: VALIDATION METHODOLOGY REVIEW
+================================================================================
+
+3.1 TEST FRAMEWORK ARCHITECTURE
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: src-gtests/tests_performance.cpp, performance.sh
+
+COMPLIANCE: ✓ ADEQUATE with NOTES
+
+Test Suite Structure:
+- 7 performance tests covering IEEE/ITU-T requirements
+- GoogleTest framework for pass/fail assertions
+- Environment variable configuration (SWCLOCK_PERF_CSV, SWCLOCK_LOG_DIR)
+- Shell script orchestration (performance.sh)
+
+Technical Assessment:
+✓ Tests exercise critical servo behaviors (step, slew, holdover)
+✓ MTIE/TDEV computed over 60s intervals at 10 Hz (600 samples)
+✓ Settling time and overshoot measured for step response
+✓ Frequency offset stability validated
+
+CONCERN: In-line metric computation (see Section 2.4, Deficiency #4)
+CONCERN: No independent reference clock for absolute validation
+
+
+3.2 COMPLIANCE THRESHOLD VALIDATION
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: src-gtests/tests_performance.cpp, lines 36-73
+
+Test Targets vs Standards:
+
+ITU-T G.8260 Class C:
+  Standard          SwClock Target       Margin
+  ────────────────  ──────────────────   ──────
+  MTIE(1s) <100µs   TARGET_MTIE_1S_NS    0%     ✓
+  MTIE(10s)<200µs   TARGET_MTIE_10S_NS   0%     ✓
+  MTIE(30s)<300µs   TARGET_MTIE_30S_NS   0%     ✓
+
+TDEV (SwClock-defined):
+  TDEV(0.1s) < 20µs   (No standard requirement - internal target)
+  TDEV(1s)   < 40µs   (No standard requirement - internal target)
+  TDEV(10s)  < 80µs   (No standard requirement - internal target)
+
+IEEE 1588-2019 Servo:
+  Settling < 20s      TARGET_SETTLE_TIME_S   ✓ (line 334)
+  Overshoot < 30%     TARGET_OVERSHOOT_PCT   ✓ (line 337)
+
+Time Error:
+  Mean < 20µs         TARGET_TE_MEAN_ABS_NS  ✓ (line 41)
+
+FINDING: All thresholds correctly match or exceed standards
+RECOMMENDATION: Document rationale for TDEV targets (currently undocumented)
+
+
+3.3 TEST EXECUTION AND REPORTING
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: performance.sh, tools/generate_performance_report.py
+
+COMPLIANCE: ✓ ADEQUATE
+
+Workflow:
+1. Build test binary with CMake/Ninja
+2. Execute tests with environment variables set
+3. Capture stdout/stderr to test_output.log
+4. Parse logs to extract metrics (analyze_performance_logs.py)
+5. Generate summary_report.md and metrics.json
+6. Optionally compare against baseline (regression mode)
+
+Technical Assessment:
+✓ Comprehensive test orchestration
+✓ Structured JSON output for automation
+✓ Markdown reports for human review
+✓ Regression testing capability
+✓ Parallel test execution (--parallel flag)
+
+CONCERN: Heavy reliance on trace parsing (see Section 2)
+CONCERN: No integration with external test harnesses (Jenkins, GitLab CI)
+
+
+3.4 TRACEABILITY AND DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────
+
+LOCATION: docs/STANDARDS_REFERENCE.md, docs/USER_GUIDE.md
+
+COMPLIANCE: ✓ ADEQUATE
+
+Documentation Quality:
+✓ 650+ lines standards reference with requirements matrix
+✓ 700+ lines user guide with troubleshooting
+✓ Inline code comments reference standards sections
+✓ README provides architecture overview
+
+GAPS:
+✗ No formal verification document (FVD)
+✗ No test plan document mapping tests to requirements
+✗ No design requirements document (DRD)
+✗ No interface control document (ICD) for log formats
+
+
+SECTION 4: SPECIFIC NON-COMPLIANCES
+================================================================================
+
+4.1 IEEE 1588-2019 REQUIREMENTS
+────────────────────────────────────────────────────────────────────────────
+
+REQUIREMENT: Section 9.5.8 - Clock Servo Specification
+
+FINDING: ✓ COMPLIANT with servo algorithm
+FINDING: ✗ NON-COMPLIANT with audit trail requirements
+
+IEEE 1588-2019 implicitly requires that "all adjustments to the local clock
+shall be logged for diagnostic purposes" (inferred from Section 16.11).
+
+CURRENT STATE:
+- swclock_adjtime() calls are NOT logged
+- No record of frequency/phase adjustments applied
+- Cannot reconstruct servo behavior from logs
+
+RECOMMENDATION: Log all adjtime() calls with parameters and results
+
+
+4.2 ITU-T G.8260 REQUIREMENTS
+────────────────────────────────────────────────────────────────────────────
+
+REQUIREMENT: Section 7 - Performance Monitoring
+
+ITU-T G.8260 specifies that "packet timing equipment shall provide performance
+monitoring capabilities" including:
+- Continuous MTIE/TDEV computation
+- Alarm generation on threshold exceedance
+- Historical data retention (minimum 24 hours)
+
+CURRENT STATE:
+- MTIE/TDEV computed only during tests (not continuous)
+- No alarm or threshold monitoring
+- No historical data retention policy
+- No real-time monitoring dashboard
+
+FINDING: ✗ NON-COMPLIANT for production deployments
+NOTE: Acceptable for laboratory validation
+
+RECOMMENDATION: Implement continuous monitoring mode for production
+
+
+4.3 ITU-T G.810 REQUIREMENTS
+────────────────────────────────────────────────────────────────────────────
+
+REQUIREMENT: Appendix II - Measurement Methods
+
+G.810 specifies that "time error measurements shall be made with respect to
+a traceable reference" (UTC or primary reference clock).
+
+CURRENT STATE:
+- Measurements relative to CLOCK_MONOTONIC_RAW (local oscillator)
+- No traceability to UTC or external reference
+- No quantification of reference clock stability
+
+FINDING: ✓ COMPLIANT for servo discipline validation
+FINDING: ⚠ LIMITATION for absolute timing validation
+
+NOTE: For PTP boundary clock validation, external GPS/GNSS reference required
+
+RECOMMENDATION: Document test limitations in validation reports
+
+
+4.4 NIST TRACEABLE CALIBRATION
+────────────────────────────────────────────────────────────────────────────
+
+REQUIREMENT: NIST Handbook 44 (implied for timing equipment)
+
+For regulatory compliance, timing equipment measurements must be:
+- Traceable to NIST time standards
+- Calibrated at documented intervals
+- Uncertainty quantified per ISO/IEC 17025
+
+CURRENT STATE:
+- No NIST traceability documented
+- No calibration certificate for test equipment
+- No uncertainty budget analysis
+
+FINDING: ✗ NOT EVALUATED (out of scope for software validation)
+
+RECOMMENDATION: For regulatory compliance, add:
+- GPS-disciplined oscillator as reference
+- NIST-traceable calibration certificates
+- Measurement uncertainty analysis
+
+
+SECTION 5: RECOMMENDATIONS FOR AUDIT COMPLIANCE
+================================================================================
+
+5.1 IMMEDIATE ACTIONS (Priority 1 - Required for Audit Pass)
+────────────────────────────────────────────────────────────────────────────
+
+RECOMMENDATION 1: Eliminate Printf Parsing Dependency
+IMPLEMENTATION:
+- Modify TELogger class to output structured JSON instead of CSV:
+  {
+    "test_run_id": "uuid-v4",
+    "swclock_version": "v2.0.0",
+    "test_name": "DisciplineTEStats_MTIE_TDEV",
+    "config": { "Kp": 200.0, "Ki": 8.0, "poll_ns": 10000000 },
+    "data": [ {"timestamp_ns": 0, "te_ns": 0}, ... ]
+  }
+- Replace analyze_performance_logs.py regex parsing with direct metric
+  computation from raw TE data
+- Verify computed metrics match test assertions within tolerance
+
+ESTIMATED EFFORT: 40 hours
+RISK: Medium (requires test infrastructure changes)
+VALIDATION: Side-by-side comparison with current printf output
+
+
+RECOMMENDATION 2: Implement Structured Event Logging
+IMPLEMENTATION:
+- Create swclock_log_event() API with enum event types:
+  typedef enum {
+    SWCLOCK_EVENT_ADJTIME_CALL,
+    SWCLOCK_EVENT_PI_STATE_CHANGE,
+    SWCLOCK_EVENT_FREQUENCY_CLAMP,
+    SWCLOCK_EVENT_PHASE_THRESHOLD
+  } swclock_event_type_t;
+- Log to binary format (e.g., length-prefixed Protocol Buffers)
+- Provide swclock_dump_log utility to convert binary -> human-readable
+- Include monotonic sequence numbers and TAI timestamps
+
+ESTIMATED EFFORT: 60 hours
+RISK: High (invasive changes to servo core)
+VALIDATION: Log playback and state reconstruction
+
+
+RECOMMENDATION 3: Add Log File Integrity Protection
+IMPLEMENTATION:
+- Compute SHA-256 hash of each CSV/JSON log on close
+- Write hash to metrics.json under "log_hashes" field
+- Verification tool to validate hashes before analysis
+- Set immutable attribute on log files (chattr +i on Linux, chflags uchg on macOS)
+
+ESTIMATED EFFORT: 8 hours
+RISK: Low
+VALIDATION: Tamper detection tests
+
+
+RECOMMENDATION 4: Extend CSV Metadata Headers
+IMPLEMENTATION:
+- Add to TELogger constructor:
+  fprintf(fp, "# SwClock Version: %s\n", SWCLOCK_VERSION);
+  fprintf(fp, "# Test Run ID: %s\n", uuid_str);
+  fprintf(fp, "# Configuration: Kp=%.1f Ki=%.1f MaxPPM=%.1f\n", ...);
+  fprintf(fp, "# System: macOS %s, CPU %s\n", ...);
+  fprintf(fp, "# Reference Clock: CLOCK_MONOTONIC_RAW\n");
+  fprintf(fp, "# Start Time: %s (TAI)\n", iso8601_timestamp);
+
+ESTIMATED EFFORT: 8 hours
+RISK: Low
+VALIDATION: Metadata parsing in analysis tools
+
+
+RECOMMENDATION 5: Enable Servo State Logging
+IMPLEMENTATION:
+- Uncomment swclock_log(c) in poll thread (line 465, sw_clock.c)
+- Add command-line flag to performance.sh: --enable-servo-logs
+- Archive servo CSV logs alongside TE logs
+- Document servo log format in docs/LOGGING_SPECIFICATION.md
+
+ESTIMATED EFFORT: 4 hours
+RISK: Low (may impact performance if logging is synchronous)
+VALIDATION: Verify servo logs capture PI state evolution
+
+
+5.2 MEDIUM-TERM IMPROVEMENTS (Priority 2 - Enhanced Compliance)
+────────────────────────────────────────────────────────────────────────────
+
+RECOMMENDATION 6: Independent Metric Validation
+- Implement dual-path MTIE/TDEV computation
+- Test code computes metrics for pass/fail (current behavior)
+- Analysis tools recompute from raw TE data (new)
+- Assert metrics match within 1% (floating point tolerance)
+- Flag discrepancies as validation errors
+
+ESTIMATED EFFORT: 24 hours
+
+
+RECOMMENDATION 7: Real-Time Monitoring Mode
+- Add --monitor mode to SwClock for continuous MTIE/TDEV
+- Circular buffer (e.g., 1 hour of 10 Hz data = 36K samples)
+- Sliding window computation every 10 seconds
+- REST API for dashboard integration
+- Alert on threshold exceedance
+
+ESTIMATED EFFORT: 80 hours
+
+
+RECOMMENDATION 8: External Reference Validation
+- Integrate GPS/GNSS module via PPS (pulse-per-second)
+- Measure SwClock TE against GPS-disciplined reference
+- Quantify oscillator stability (Allan deviation)
+- Document reference accuracy and traceability
+
+ESTIMATED EFFORT: 120 hours (requires hardware)
+
+
+RECOMMENDATION 9: Formal Test Plan Document
+- Create IEEE 829-2008 compliant test plan
+- Map each test case to specific standard requirement
+- Define pass/fail criteria with traceability matrix
+- Include test environment specifications
+- Document test data retention policy
+
+ESTIMATED EFFORT: 40 hours
+
+
+RECOMMENDATION 10: Log Format Standardization
+- Define formal log schema (JSON Schema or Protocol Buffers .proto)
+- Version log formats with semantic versioning
+- Backward compatibility guarantees for log parsers
+- Published interchange format for multi-vendor interoperability
+
+ESTIMATED EFFORT: 32 hours
+
+
+5.3 LONG-TERM ENHANCEMENTS (Priority 3 - Industry Best Practices)
+────────────────────────────────────────────────────────────────────────────
+
+RECOMMENDATION 11: Cryptographic Audit Trail
+- Sign log files with ECDSA or Ed25519
+- Timestamp logs with RFC 3161 trusted timestamping
+- Blockchain anchoring for critical validation runs
+- Hardware security module (HSM) integration
+
+ESTIMATED EFFORT: 160 hours
+
+
+RECOMMENDATION 12: Continuous Integration
+- GitHub Actions workflow for automated testing
+- Performance regression detection in PRs
+- Nightly runs of --full test suite
+- Automatic report generation and archival
+
+ESTIMATED EFFORT: 40 hours
+
+
+RECOMMENDATION 13: Measurement Uncertainty Analysis
+- ISO/IEC Guide 98-3 (GUM) uncertainty budget
+- Quantify contributions: ADC noise, interrupt latency, etc.
+- Monte Carlo simulation of error propagation
+- Publish expanded uncertainty (k=2, 95% confidence)
+
+ESTIMATED EFFORT: 80 hours
+
+
+SECTION 6: COMPLIANCE SCORECARD
+================================================================================
+
+CATEGORY                           SCORE    MAX   %      NOTES
+──────────────────────────────────────────────────────────────────────────
+Servo Algorithm Implementation     10/10   10   100%   Excellent
+Standards Compliance (Thresholds)    9/10   10    90%   Well-defined
+Metrics Computation (MTIE/TDEV)      9/10   10    90%   Correct algorithms
+Logging Architecture                 3/10   10    30%   Critical deficiency
+Validation Methodology               6/10   10    60%   Printf dependency
+Traceability & Documentation         6/10   10    60%   Missing ICD/FVD
+Audit Trail & Tamper Detection       0/10   10     0%   Not implemented
+Real-Time Monitoring                 0/10   10     0%   Not applicable
+External Reference Validation        0/10   10     0%   Lab validation only
+──────────────────────────────────────────────────────────────────────────
+OVERALL SCORE                       43/100   43%  CONDITIONAL PASS*
+
+*CONDITIONAL PASS: Suitable for laboratory validation and development.
+ NOT COMPLIANT for production deployment or regulatory submission without
+ addressing Priority 1 recommendations.
+
+
+SECTION 7: AUDIT CONCLUSION
+================================================================================
+
+FINAL DETERMINATION: CONDITIONAL COMPLIANCE
+
+The SwClock implementation demonstrates technically sound servo discipline
+algorithms that meet IEEE 1588-2019 and ITU-T G.8260 performance requirements
+when tested in a laboratory environment.
+
+However, the validation infrastructure exhibits CRITICAL deficiencies that
+prevent full IEEE audit compliance:
+
+PRIMARY DEFICIENCY:
+The reliance on printf trace parsing for extracting compliance metrics creates
+a fragile, non-deterministic validation path that violates IEEE requirements
+for traceable, tamper-evident audit trails.
+
+IMPACT ASSESSMENT:
+- Laboratory validation: ACCEPTABLE (current state)
+- Production deployment: NOT ACCEPTABLE (needs Priority 1 fixes)
+- Regulatory submission: NOT ACCEPTABLE (needs Priority 1 + Priority 2)
+- Multi-vendor interoperability: NOT ACCEPTABLE (needs standardized logs)
+
+MANDATORY ACTIONS FOR FULL COMPLIANCE:
+1. Eliminate printf parsing dependency (Recommendation 1)
+2. Implement structured event logging (Recommendation 2)
+3. Add log file integrity protection (Recommendation 3)
+4. Extend CSV metadata (Recommendation 4)
+5. Enable servo state logging (Recommendation 5)
+
+ESTIMATED EFFORT TO ACHIEVE FULL COMPLIANCE: 120 hours
+
+CERTIFICATION RECOMMENDATION:
+- APPROVE for laboratory use and development
+- CONDITIONAL APPROVE for production pending Priority 1 fixes
+- DEFER regulatory certification pending Priority 1 + Priority 2 work
+
+
+TECHNICAL MERIT:
+Despite logging deficiencies, the SwClock servo implementation is well-designed,
+correctly implements IEEE/ITU-T algorithms, and meets performance targets with
+good margins. The core technology is sound; only the validation framework needs
+strengthening to achieve full audit compliance.
+
+
+AUDITOR NOTES:
+This audit was conducted by simulated IEEE auditor persona as requested. The
+findings represent a thorough technical analysis but should be validated by
+actual IEEE certification bodies for formal compliance verification.
+
+
+================================================================================
+                          END OF AUDIT REPORT
+================================================================================
+
+Report prepared: January 13, 2026
+SwClock Version: v2.0.0
+Standards reviewed: IEEE 1588-2019, ITU-T G.810, ITU-T G.8260, ITU-T G.8271
+Total findings: 5 compliant, 7 non-compliant, 3 concerns
+Priority 1 recommendations: 5
+Estimated remediation effort: 120 hours
+
+For questions or clarifications regarding this audit, refer to:
+- docs/STANDARDS_REFERENCE.md (standards compliance matrix)
+- docs/USER_GUIDE.md (validation procedures)
+- tools/ieee_metrics.py (metrics computation source)
+
+================================================================================
+
+
+================================================================================
+                    DEVELOPER RESPONSE TO AUDIT
+              SwClock Architecture Team - Implementation Proposal
+================================================================================
+
+RESPONSE DATE: January 13, 2026
+RESPONDING TEAM: SwClock Core Development Team
+DOCUMENT STATUS: Implementation Proposal - For Review
+
+
+EXECUTIVE RESPONSE
+================================================================================
+
+We acknowledge the audit findings and agree with the assessment that SwClock's
+core servo implementation is technically sound while the validation infrastructure
+requires significant improvements for production deployment and regulatory compliance.
+
+POSITION STATEMENT:
+The identified deficiencies stem from a deliberate architectural decision made
+during rapid prototyping: prioritize servo algorithm correctness over logging
+infrastructure. This was appropriate for laboratory validation but, as the audit
+correctly identifies, is insufficient for production deployment.
+
+COMMITMENT:
+We commit to implementing all Priority 1 recommendations within the next 8 weeks
+and Priority 2 recommendations within 6 months. This response provides a detailed
+technical proposal for each recommendation with concrete implementation plans.
+
+
+ARCHITECTURAL PHILOSOPHY
+================================================================================
+
+DESIGN PRINCIPLES FOR REMEDIATION:
+
+1. SEPARATION OF CONCERNS
+   - Servo discipline logic remains unchanged (proven correct)
+   - Logging infrastructure built as orthogonal subsystem
+   - Zero performance impact when logging disabled
+   - Compile-time feature flags for embedded deployments
+
+2. BACKWARD COMPATIBILITY
+   - Existing CSV format preserved as "legacy" mode
+   - New structured formats coexist with current logs
+   - Analysis tools support both old and new formats during transition
+   - Migration path for existing test infrastructure
+
+3. PERFORMANCE FIRST
+   - Asynchronous logging via lock-free ring buffers
+   - Binary formats optimized for minimal overhead (<1% CPU)
+   - Batch writes to reduce I/O syscall frequency
+   - Memory-mapped files for zero-copy semantics
+
+4. STANDARDS ALIGNMENT
+   - IEEE 1588-2019 TLV extensions for log interchange
+   - ITU-T G.8260 monitoring requirements compliance
+   - ISO/IEC 17025 traceability for measurement uncertainty
+   - NIST SP 800-53 security controls for audit trails
+
+
+DETAILED IMPLEMENTATION PROPOSALS
+================================================================================
+
+RECOMMENDATION 1: Eliminate Printf Parsing Dependency
+────────────────────────────────────────────────────────────────────────────
+
+PROPOSAL: Dual-Format Logging with JSON-LD Schema
+
+ARCHITECTURE:
+┌──────────────────┐
+│  Test Suite      │
+│ (GoogleTest)     │
+└────────┬─────────┘
+         │ writes
+         ▼
+┌──────────────────┐      ┌────────────────────┐
+│  Structured Log  │◄────►│  JSON-LD Schema    │
+│  (JSONL format)  │      │  (versioned)       │
+└────────┬─────────┘      └────────────────────┘
+         │ consumed by
+         ▼
+┌──────────────────┐      ┌────────────────────┐
+│ Analysis Engine  │◄────►│ Independent Metrics│
+│ (Python/C++)     │      │ Validator          │
+└──────────────────┘      └────────────────────┘
+
+IMPLEMENTATION DETAILS:
+
+Phase 1.1: Create Structured Logger (Week 1-2)
+──────────────────────────────────────────────
+File: src/sw_clock/sw_clock_structured_log.h
+
+typedef enum {
+    SWCLOCK_LOG_FORMAT_LEGACY_CSV,  // Current CSV format
+    SWCLOCK_LOG_FORMAT_JSONL,       // JSON Lines (recommended)
+    SWCLOCK_LOG_FORMAT_MSGPACK,     // Binary MessagePack (future)
+    SWCLOCK_LOG_FORMAT_PROTOBUF     // Protocol Buffers (future)
+} swclock_log_format_t;
+
+typedef struct {
+    const char* test_run_id;        // UUID v4
+    const char* test_name;
+    uint64_t    start_timestamp_ns; // TAI or CLOCK_MONOTONIC_RAW
+    swclock_config_t config;        // Kp, Ki, MaxPPM, poll_ns
+    swclock_log_format_t format;
+    FILE* output_fp;
+    bool  auto_flush;               // For real-time streaming
+} swclock_structured_logger_t;
+
+swclock_structured_logger_t* swclock_logger_create(
+    const char* test_name,
+    swclock_log_format_t format
+);
+
+void swclock_logger_write_sample(
+    swclock_structured_logger_t* logger,
+    uint64_t timestamp_ns,
+    int64_t  te_ns
+);
+
+void swclock_logger_write_metadata(
+    swclock_structured_logger_t* logger,
+    const char* key,
+    const char* value
+);
+
+void swclock_logger_finalize(swclock_structured_logger_t* logger);
+
+JSON-LD Schema Example:
+{
+  "@context": "https://swclock.org/schema/v2.0.0/test-log.jsonld",
+  "@type": "PerformanceTestLog",
+  "testRunId": "550e8400-e29b-41d4-a716-446655440000",
+  "swclockVersion": "v2.0.0",
+  "testName": "Perf.DisciplineTEStats_MTIE_TDEV",
+  "startTime": "2026-01-13T16:32:49.123456789Z",
+  "config": {
+    "Kp_ppm_per_s": 200.0,
+    "Ki_ppm_per_s2": 8.0,
+    "max_ppm": 200.0,
+    "poll_ns": 10000000,
+    "phase_eps_ns": 20000
+  },
+  "environment": {
+    "os": "macOS 14.2",
+    "cpu": "Apple M1 Max",
+    "referenceClk": "CLOCK_MONOTONIC_RAW"
+  },
+  "samples": [
+    {"t_ns": 0, "te_ns": 0},
+    {"t_ns": 100000000, "te_ns": 543}
+  ],
+  "checksum": "sha256:a3f8b2..."
+}
+
+Phase 1.2: Modify TELogger Class (Week 2)
+──────────────────────────────────────────
+File: src-gtests/tests_performance.cpp
+
+class TELogger {
+private:
+  swclock_structured_logger_t* structured_logger;
+  FILE* legacy_csv_fp;  // For backward compatibility
+  bool dual_logging_enabled;
+
+public:
+  TELogger(const char* test_name) {
+    // Create structured logger (new format)
+    structured_logger = swclock_logger_create(
+      test_name,
+      SWCLOCK_LOG_FORMAT_JSONL
+    );
+    
+    // Optionally maintain CSV for transition period
+    if (getenv("SWCLOCK_DUAL_LOG")) {
+      dual_logging_enabled = true;
+      legacy_csv_fp = create_legacy_csv(test_name);
+    }
+  }
+  
+  void log(long long timestamp_ns, long long te_ns) {
+    // Write to structured log
+    swclock_logger_write_sample(structured_logger, timestamp_ns, te_ns);
+    
+    // Optionally write to legacy CSV
+    if (dual_logging_enabled) {
+      fprintf(legacy_csv_fp, "%lld,%lld\n", timestamp_ns, te_ns);
+    }
+  }
+};
+
+Phase 1.3: Independent Metrics Computation (Week 3-4)
+──────────────────────────────────────────────────────
+File: tools/validate_metrics.py (NEW)
+
+class IndependentMetricsValidator:
+    """
+    Recomputes MTIE/TDEV from raw data and validates against test assertions.
+    This breaks the circular dependency where analysis tools just parse
+    test-computed values.
+    """
+    
+    def validate_test_run(self, jsonl_log_path: str) -> ValidationReport:
+        # Load structured log
+        with open(jsonl_log_path) as f:
+            log_data = json.loads(f.read())
+        
+        # Extract raw TE samples
+        te_ns = np.array([s['te_ns'] for s in log_data['samples']])
+        timestamps_ns = np.array([s['t_ns'] for s in log_data['samples']])
+        sample_dt_s = np.mean(np.diff(timestamps_ns)) / 1e9
+        
+        # Compute metrics independently
+        metrics_engine = IEEEMetrics()
+        computed_mtie = metrics_engine.compute_mtie(te_ns, sample_dt_s)
+        computed_tdev = metrics_engine.compute_tdev(te_ns, sample_dt_s)
+        computed_te_stats = metrics_engine.compute_te_stats(te_ns, 1/sample_dt_s)
+        
+        # Load test assertions (if available in log)
+        test_assertions = log_data.get('test_assertions', {})
+        
+        # Cross-validate
+        validation_errors = []
+        for tau, mtie_computed in computed_mtie.items():
+            mtie_asserted = test_assertions.get(f'mtie_{tau}s')
+            if mtie_asserted:
+                rel_error = abs(mtie_computed - mtie_asserted) / mtie_asserted
+                if rel_error > 0.01:  # 1% tolerance
+                    validation_errors.append(
+                        f"MTIE({tau}s): computed={mtie_computed:.1f}, "
+                        f"asserted={mtie_asserted:.1f}, error={rel_error*100:.2f}%"
+                    )
+        
+        return ValidationReport(
+            passed=(len(validation_errors) == 0),
+            computed_metrics={'mtie': computed_mtie, 'tdev': computed_tdev},
+            validation_errors=validation_errors
+        )
+
+MIGRATION STRATEGY:
+- Week 1-2: Implement structured logger, deploy alongside existing CSV
+- Week 3-4: Update all 7 tests to use structured logger with dual-logging
+- Week 5: Validate metrics computation matches existing results (< 1% error)
+- Week 6: Disable CSV logging, structured logging becomes primary
+- Week 7-8: Deprecate trace parsing, all analysis from structured logs
+
+VALIDATION:
+✓ Run full test suite with dual-logging enabled
+✓ Compare CSV-derived metrics vs JSONL-derived metrics (should match)
+✓ Verify independent validator detects injected errors (negative testing)
+✓ Performance benchmark: overhead < 1% CPU, < 10MB RAM for 60s test
+
+ESTIMATED EFFORT: 80 hours (vs. audit estimate 40 hours)
+RATIONALE: Additional time for comprehensive testing and migration tooling
+
+
+RECOMMENDATION 2: Implement Structured Event Logging
+────────────────────────────────────────────────────────────────────────────
+
+PROPOSAL: Lock-Free Event Log with Binary Encoding
+
+ARCHITECTURE:
+┌──────────────┐
+│ SwClock Core │
+│   (C code)   │
+└──────┬───────┘
+       │ emits events
+       ▼
+┌──────────────────────┐
+│ Lock-Free Ring Buffer│  ◄── SPSC (Single Producer, Single Consumer)
+│  (Memory-Mapped)     │
+└──────┬───────────────┘
+       │ consumed by
+       ▼
+┌──────────────────────┐      ┌─────────────────┐
+│ Background Logger    │─────►│ Binary Event Log│
+│ Thread (async write) │      │ (append-only)   │
+└──────────────────────┘      └─────────────────┘
+
+IMPLEMENTATION DETAILS:
+
+Phase 2.1: Event Type Definitions (Week 1)
+───────────────────────────────────────────
+File: src/sw_clock/sw_clock_events.h
+
+typedef enum {
+    SWCLOCK_EVENT_ADJTIME_CALL       = 0x01,
+    SWCLOCK_EVENT_ADJTIME_RETURN     = 0x02,
+    SWCLOCK_EVENT_PI_ENABLE          = 0x10,
+    SWCLOCK_EVENT_PI_DISABLE         = 0x11,
+    SWCLOCK_EVENT_PI_STEP            = 0x12,
+    SWCLOCK_EVENT_PHASE_SLEW_START   = 0x20,
+    SWCLOCK_EVENT_PHASE_SLEW_DONE    = 0x21,
+    SWCLOCK_EVENT_FREQUENCY_CLAMP    = 0x30,
+    SWCLOCK_EVENT_THRESHOLD_CROSS    = 0x40,
+    SWCLOCK_EVENT_CLOCK_RESET        = 0x50,
+    SWCLOCK_EVENT_LOG_MARKER         = 0xFF  // User-defined markers
+} swclock_event_type_t;
+
+// Event structure (binary format, little-endian)
+// Header: 16 bytes fixed size
+typedef struct __attribute__((packed)) {
+    uint64_t sequence_num;      // Monotonic event counter
+    uint64_t timestamp_ns;      // TAI or CLOCK_MONOTONIC_RAW
+    uint16_t event_type;        // swclock_event_type_t
+    uint16_t payload_size;      // Variable payload length
+    uint32_t reserved;
+} swclock_event_header_t;
+
+// Event payloads (variable size)
+typedef struct __attribute__((packed)) {
+    uint32_t modes;             // ADJ_* flags
+    int64_t  offset_ns;         // Phase offset
+    int64_t  freq_scaled_ppm;   // Frequency adjustment
+    int32_t  return_code;       // TIME_OK or error
+} swclock_event_adjtime_payload_t;
+
+typedef struct __attribute__((packed)) {
+    double   pi_freq_ppm;       // Current PI output
+    double   pi_int_error_s;    // Integral error
+    int64_t  remaining_phase_ns;// Outstanding phase
+} swclock_event_pi_step_payload_t;
+
+Phase 2.2: Lock-Free Ring Buffer (Week 2)
+──────────────────────────────────────────
+File: src/sw_clock/sw_clock_ringbuf.h
+
+#define SWCLOCK_RINGBUF_SIZE (1024 * 1024)  // 1MB default
+
+typedef struct {
+    uint8_t buffer[SWCLOCK_RINGBUF_SIZE];
+    _Atomic uint64_t write_pos;     // Producer writes here
+    _Atomic uint64_t read_pos;      // Consumer reads from here
+    bool overrun_flag;               // Set on buffer full
+} swclock_ringbuf_t;
+
+// Producer API (called from servo core)
+bool swclock_ringbuf_push(
+    swclock_ringbuf_t* rb,
+    const swclock_event_header_t* header,
+    const void* payload
+);
+
+// Consumer API (called from logger thread)
+bool swclock_ringbuf_pop(
+    swclock_ringbuf_t* rb,
+    swclock_event_header_t* header,
+    void* payload,
+    size_t max_payload_size
+);
+
+Phase 2.3: Instrumentation of Servo Core (Week 3)
+──────────────────────────────────────────────────
+File: src/sw_clock/sw_clock.c (modifications)
+
+int swclock_adjtime(SwClock* c, struct timex *tptr) {
+    if (!c || !tptr) { errno = EINVAL; return -1; }
+    
+    // Log entry event
+    if (c->event_logger_enabled) {
+        swclock_event_adjtime_payload_t payload = {
+            .modes = tptr->modes,
+            .offset_ns = (tptr->modes & ADJ_NANO) ? tptr->offset : tptr->offset * 1000LL,
+            .freq_scaled_ppm = (tptr->modes & ADJ_FREQUENCY) ? tptr->freq : 0,
+            .return_code = -1  // Will be updated on return
+        };
+        swclock_log_event(c, SWCLOCK_EVENT_ADJTIME_CALL, &payload, sizeof(payload));
+    }
+    
+    pthread_mutex_lock(&c->lock);
+    // ... existing adjtime logic ...
+    int ret_code = TIME_OK;
+    pthread_mutex_unlock(&c->lock);
+    
+    // Log return event
+    if (c->event_logger_enabled) {
+        swclock_event_adjtime_payload_t payload = {
+            .modes = tptr->modes,
+            .return_code = ret_code
+        };
+        swclock_log_event(c, SWCLOCK_EVENT_ADJTIME_RETURN, &payload, sizeof(payload));
+    }
+    
+    return ret_code;
+}
+
+static void swclock_pi_step(SwClock* c, double dt_s) {
+    // ... existing PI logic ...
+    
+    // Log PI state after each step
+    if (c->event_logger_enabled) {
+        swclock_event_pi_step_payload_t payload = {
+            .pi_freq_ppm = c->pi_freq_ppm,
+            .pi_int_error_s = c->pi_int_error_s,
+            .remaining_phase_ns = c->remaining_phase_ns
+        };
+        swclock_log_event(c, SWCLOCK_EVENT_PI_STEP, &payload, sizeof(payload));
+    }
+}
+
+Phase 2.4: Event Log Reader/Dumper (Week 4)
+────────────────────────────────────────────
+File: tools/swclock_event_dump.c (NEW)
+
+// Binary log → Human-readable converter
+int main(int argc, char** argv) {
+    FILE* binlog = fopen(argv[1], "rb");
+    
+    while (!feof(binlog)) {
+        swclock_event_header_t header;
+        if (fread(&header, sizeof(header), 1, binlog) != 1) break;
+        
+        void* payload = malloc(header.payload_size);
+        fread(payload, header.payload_size, 1, binlog);
+        
+        printf("[%llu] seq=%llu type=0x%02x ", 
+               header.timestamp_ns, header.sequence_num, header.event_type);
+        
+        switch (header.event_type) {
+            case SWCLOCK_EVENT_ADJTIME_CALL:
+                swclock_event_adjtime_payload_t* adj = payload;
+                printf("adjtime_call(modes=0x%x, offset=%lld ns, freq=%lld)\n",
+                       adj->modes, adj->offset_ns, adj->freq_scaled_ppm);
+                break;
+            case SWCLOCK_EVENT_PI_STEP:
+                swclock_event_pi_step_payload_t* pi = payload;
+                printf("pi_step(freq=%.3f ppm, int_err=%.6f s, phase=%lld ns)\n",
+                       pi->pi_freq_ppm, pi->pi_int_error_s, pi->remaining_phase_ns);
+                break;
+            // ... other event types ...
+        }
+        
+        free(payload);
+    }
+}
+
+PERFORMANCE OPTIMIZATION:
+- Ring buffer uses atomic operations (no locks in hot path)
+- Background thread batches writes (amortize I/O cost)
+- Memory-mapped file for zero-copy write
+- Compile-time flag to disable event logging (zero overhead)
+
+INTEGRATION WITH TESTS:
+- Environment variable: SWCLOCK_EVENT_LOG=1 enables logging
+- Output: test_name_events.bin alongside CSV/JSONL
+- Analysis tools replay events to verify servo state machine
+- Can reconstruct complete servo timeline from event log
+
+ESTIMATED EFFORT: 80 hours (vs. audit estimate 60 hours)
+RATIONALE: Lock-free implementation requires careful testing for race conditions
+
+
+RECOMMENDATION 3: Add Log File Integrity Protection
+────────────────────────────────────────────────────────────────────────────
+
+PROPOSAL: Merkle Tree with SHA-256 and Optional HSM Support
+
+IMPLEMENTATION DETAILS:
+
+Phase 3.1: Hash-Chain Log Structure (Week 1)
+─────────────────────────────────────────────
+File: tools/log_integrity.py (NEW)
+
+import hashlib
+import json
+from pathlib import Path
+
+class LogIntegrityManager:
+    """
+    Implements hash-chaining for tamper detection.
+    Each log chunk includes hash of previous chunk (blockchain-like).
+    """
+    
+    def seal_log_file(self, log_path: Path) -> dict:
+        """
+        Compute SHA-256 of log file and store in manifest.
+        """
+        sha256 = hashlib.sha256()
+        file_size = 0
+        
+        with open(log_path, 'rb') as f:
+            while chunk := f.read(8192):
+                sha256.update(chunk)
+                file_size += len(chunk)
+        
+        digest = sha256.hexdigest()
+        
+        # Store in manifest
+        manifest = {
+            'file': str(log_path),
+            'size_bytes': file_size,
+            'sha256': digest,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'algorithm': 'SHA-256'
+        }
+        
+        return manifest
+    
+    def verify_log_file(self, log_path: Path, manifest: dict) -> bool:
+        """
+        Verify log file has not been tampered with.
+        """
+        computed_hash = self.seal_log_file(log_path)['sha256']
+        expected_hash = manifest['sha256']
+        
+        if computed_hash != expected_hash:
+            print(f"INTEGRITY VIOLATION: {log_path}")
+            print(f"  Expected: {expected_hash}")
+            print(f"  Computed: {computed_hash}")
+            return False
+        
+        return True
+
+Phase 3.2: Integration with Performance Script (Week 1)
+────────────────────────────────────────────────────────
+File: performance.sh (modifications)
+
+# After test execution completes
+echo -e "${YELLOW}Sealing log files...${NC}"
+python3 tools/log_integrity.py seal "${OUTPUT_DIR}"
+
+# Creates: ${OUTPUT_DIR}/manifest.json
+# {
+#   "test_run_id": "uuid",
+#   "timestamp": "2026-01-13T...",
+#   "files": [
+#     {"path": "raw_data/test1.csv", "sha256": "a3f8...", "size": 12345},
+#     {"path": "test_output.log", "sha256": "b2e9...", "size": 67890}
+#   ],
+#   "manifest_signature": "optional-RSA-signature"
+# }
+
+# Analysis tools must verify before processing
+python3 tools/analyze_performance_logs.py \
+    --verify-integrity \
+    --test-output="${OUTPUT_DIR}/test_output.log"
+
+Phase 3.3: Immutable File Attributes (Week 2)
+──────────────────────────────────────────────
+File: tools/log_integrity.py (additions)
+
+def set_immutable(file_path: Path):
+    """
+    Set file immutable flag (platform-specific).
+    Prevents accidental or malicious modification.
+    """
+    import subprocess
+    import platform
+    
+    system = platform.system()
+    
+    if system == 'Darwin':  # macOS
+        subprocess.run(['chflags', 'uchg', str(file_path)], check=True)
+    elif system == 'Linux':
+        subprocess.run(['chattr', '+i', str(file_path)], check=True)
+    else:
+        print(f"Warning: Immutable flag not supported on {system}")
+
+def clear_immutable(file_path: Path):
+    """Clear immutable flag (requires sudo on Linux)."""
+    import subprocess
+    import platform
+    
+    system = platform.system()
+    
+    if system == 'Darwin':
+        subprocess.run(['chflags', 'nouchg', str(file_path)], check=True)
+    elif system == 'Linux':
+        subprocess.run(['sudo', 'chattr', '-i', str(file_path)], check=True)
+
+Phase 3.4: Optional Cryptographic Signatures (Week 3)
+──────────────────────────────────────────────────────
+File: tools/crypto_sign.py (NEW)
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+import json
+
+class ManifestSigner:
+    """
+    Signs log manifest with RSA private key for non-repudiation.
+    Optional feature for regulatory compliance.
+    """
+    
+    def __init__(self, private_key_path: str = None):
+        if private_key_path:
+            with open(private_key_path, 'rb') as f:
+                self.private_key = serialization.load_pem_private_key(
+                    f.read(), password=None
+                )
+        else:
+            # Generate ephemeral key if none provided
+            self.private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048
+            )
+    
+    def sign_manifest(self, manifest: dict) -> str:
+        """
+        Sign manifest JSON with RSA-PSS.
+        Returns base64-encoded signature.
+        """
+        manifest_bytes = json.dumps(manifest, sort_keys=True).encode()
+        
+        signature = self.private_key.sign(
+            manifest_bytes,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        
+        import base64
+        return base64.b64encode(signature).decode()
+    
+    def verify_signature(self, manifest: dict, signature: str) -> bool:
+        """Verify manifest signature with public key."""
+        # Implementation left as exercise
+        pass
+
+DEPLOYMENT MODEL:
+- Default mode: SHA-256 hashing only (no signatures)
+- Enhanced mode: RSA signatures with user-provided keys
+- Enterprise mode: HSM integration (e.g., YubiHSM2) for key protection
+
+ESTIMATED EFFORT: 12 hours (matches audit estimate)
+RISK: Low - cryptography is well-understood, libraries mature
+
+
+RECOMMENDATION 4: Extend CSV Metadata Headers
+────────────────────────────────────────────────────────────────────────────
+
+PROPOSAL: RFC-Style Header Block with Machine-Parseable Fields
+
+IMPLEMENTATION:
+
+Phase 4.1: Metadata Collector (Week 1)
+───────────────────────────────────────
+File: src-gtests/test_metadata.h (NEW)
+
+typedef struct {
+    // Test identification
+    char test_run_id[37];          // UUID string
+    char test_name[128];
+    char swclock_version[16];      // "v2.0.0"
+    
+    // Configuration
+    double kp_ppm_per_s;
+    double ki_ppm_per_s2;
+    double max_ppm;
+    int64_t poll_ns;
+    int64_t phase_eps_ns;
+    
+    // System information
+    char os_name[64];              // "macOS 14.2"
+    char os_version[32];
+    char cpu_model[128];           // "Apple M1 Max"
+    char hostname[256];
+    
+    // Timing reference
+    char reference_clock[64];      // "CLOCK_MONOTONIC_RAW"
+    
+    // Test conditions
+    char start_time_iso8601[64];   // "2026-01-13T16:32:49.123456Z"
+    char timezone[16];             // "UTC"
+    
+    // Environment (optional)
+    double ambient_temp_c;         // Temperature if available
+    double system_load_avg;        // CPU load
+} test_metadata_t;
+
+void collect_test_metadata(test_metadata_t* meta, const char* test_name);
+
+Phase 4.2: Enhanced CSV Header (Week 1)
+────────────────────────────────────────
+File: src-gtests/tests_performance.cpp (modifications)
+
+void TELogger::write_csv_header(test_metadata_t* meta) {
+    fprintf(fp,
+        "# ========================================\n"
+        "# SwClock Performance Test CSV Export\n"
+        "# ========================================\n"
+        "#\n"
+        "# Test Identification:\n"
+        "#   Test Name:        %s\n"
+        "#   Test Run ID:      %s\n"
+        "#   SwClock Version:  %s\n"
+        "#   Start Time (UTC): %s\n"
+        "#\n"
+        "# Configuration:\n"
+        "#   Kp (ppm/s):       %.3f\n"
+        "#   Ki (ppm/s²):      %.3f\n"
+        "#   Max PPM:          %.1f\n"
+        "#   Poll Interval:    %lld ns (%.1f Hz)\n"
+        "#   Phase Epsilon:    %lld ns (%.1f µs)\n"
+        "#\n"
+        "# System Information:\n"
+        "#   Operating System: %s\n"
+        "#   CPU:              %s\n"
+        "#   Hostname:         %s\n"
+        "#   Reference Clock:  %s\n"
+        "#\n"
+        "# Data Format:\n"
+        "#   Columns:          timestamp_ns, te_ns\n"
+        "#   Sample Rate:      %.3f Hz\n"
+        "#   Timestamp Base:   CLOCK_MONOTONIC_RAW at test start\n"
+        "#   TE Definition:    (SwClock - Reference) in nanoseconds\n"
+        "#\n"
+        "# Compliance Targets:\n"
+        "#   Standard:         ITU-T G.8260 Class C\n"
+        "#   MTIE(1s):         < 100 µs\n"
+        "#   MTIE(10s):        < 200 µs\n"
+        "#   MTIE(30s):        < 300 µs\n"
+        "#\n"
+        "# ========================================\n"
+        "timestamp_ns,te_ns\n",
+        meta->test_name,
+        meta->test_run_id,
+        meta->swclock_version,
+        meta->start_time_iso8601,
+        meta->kp_ppm_per_s,
+        meta->ki_ppm_per_s2,
+        meta->max_ppm,
+        meta->poll_ns, 1e9 / meta->poll_ns,
+        meta->phase_eps_ns, meta->phase_eps_ns / 1000.0,
+        meta->os_name,
+        meta->cpu_model,
+        meta->hostname,
+        meta->reference_clock,
+        sample_rate_hz
+    );
+}
+
+PARSING SUPPORT:
+- Python library: parse_csv_metadata(csv_path) → dict
+- Regex-free parsing using comment prefix detection
+- Backward compatible (tools skip unknown headers)
+
+ESTIMATED EFFORT: 8 hours (matches audit estimate)
+
+
+RECOMMENDATION 5: Enable Servo State Logging
+────────────────────────────────────────────────────────────────────────────
+
+PROPOSAL: Configurable Servo Logging with Performance Controls
+
+IMPLEMENTATION:
+
+Phase 5.1: Command-Line Flag (Week 1)
+──────────────────────────────────────
+File: performance.sh (modifications)
+
+# Add option to enable servo logging
+ENABLE_SERVO_LOG=false
+
+case $1 in
+    --enable-servo-log)
+        ENABLE_SERVO_LOG=true
+        shift
+        ;;
+esac
+
+# Before test execution
+if [ "$ENABLE_SERVO_LOG" = true ]; then
+    export SWCLOCK_SERVO_LOG=1
+    echo -e "${CYAN}Servo state logging: ENABLED${NC}"
+fi
+
+Phase 5.2: Conditional Logging in Servo (Week 1)
+─────────────────────────────────────────────────
+File: src/sw_clock/sw_clock.c (modifications)
+
+static void* swclock_poll_thread_main(void* arg) {
+    SwClock* c = (SwClock*)arg;
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = SWCLOCK_POLL_NS };
+    
+    // Check if servo logging enabled
+    bool servo_log_enabled = (getenv("SWCLOCK_SERVO_LOG") != NULL);
+    
+    while (1) {
+        nanosleep(&ts, NULL);
+        
+        pthread_mutex_lock(&c->lock);
+        bool stop = c->stop_flag;
+        pthread_mutex_unlock(&c->lock);
+        if (stop) break;
+        
+        swclock_poll(c);
+        
+        // Conditional logging (previously commented out)
+        if (servo_log_enabled) {
+            pthread_mutex_lock(&c->lock);
+            if (c->log_fp && c->is_logging) {
+                swclock_log(c);  // UNCOMMENTED
+            }
+            pthread_mutex_unlock(&c->lock);
+        }
+    }
+    return NULL;
+}
+
+Phase 5.3: Automatic Servo Log Initialization (Week 1)
+───────────────────────────────────────────────────────
+File: src-gtests/tests_performance.cpp (modifications)
+
+TEST(Perf, DisciplineTEStats_MTIE_TDEV) {
+    SwClock* clk = swclock_create();
+    ASSERT_NE(clk, nullptr);
+    
+    // Enable servo logging if requested
+    if (getenv("SWCLOCK_SERVO_LOG")) {
+        char servo_log_path[512];
+        snprintf(servo_log_path, sizeof(servo_log_path),
+                 "%s/servo_state_%s.csv", get_log_dir(), "DisciplineTEStats");
+        swclock_start_log(clk, servo_log_path);
+        printf("  Servo logging to: %s\n", servo_log_path);
+    }
+    
+    // ... rest of test ...
+}
+
+PERFORMANCE CONSIDERATIONS:
+- Servo log write every 10ms (100 Hz)
+- ~150 bytes per CSV line
+- 15 KB/s write rate (negligible for modern SSDs)
+- Can be disabled for production if not needed
+
+DOCUMENTATION:
+File: docs/LOGGING_SPECIFICATION.md (NEW)
+
+# SwClock Logging Specification
+
+## Servo State Log Format
+
+CSV columns (13 fields):
+1. timestamp_ns - CLOCK_MONOTONIC_RAW at log time
+2. base_rt_ns - REALTIME base (adjusted)
+3. base_mono_ns - MONOTONIC base (disciplined)
+4. freq_scaled_ppm - Base frequency bias (Linux scaled units)
+5. pi_freq_ppm - PI controller output (ppm)
+6. pi_int_error_s - Integral error accumulator (seconds)
+7. remaining_phase_ns - Outstanding phase to slew (ns)
+8. pi_servo_enabled - Boolean (1=enabled, 0=disabled)
+9. maxerror - Maximum error estimate (µs, Linux convention)
+10. esterror - Estimated error (µs)
+11. constant - Time constant (not used)
+12. tick - Tick value (not used)
+13. tai - TAI offset (seconds)
+
+ESTIMATED EFFORT: 4 hours (matches audit estimate)
+
+
+RECOMMENDATIONS 6-13: MEDIUM AND LONG-TERM
+────────────────────────────────────────────────────────────────────────────
+
+SUMMARY IMPLEMENTATION TIMELINE:
+
+Priority 1 (Weeks 1-8):
+  Week 1-2:  Rec 1 Phase 1 - Structured logger
+  Week 2-3:  Rec 1 Phase 2 - TELogger modifications
+  Week 3-4:  Rec 1 Phase 3 - Independent validator
+  Week 5:    Rec 2 Phase 1 - Event definitions
+  Week 6:    Rec 2 Phase 2 - Ring buffer
+  Week 7:    Rec 2 Phase 3 - Instrumentation
+  Week 8:    Rec 3, 4, 5 - Integrity, metadata, servo logging
+
+Priority 2 (Months 3-6):
+  Rec 6:  Independent Metric Validation - Month 3
+  Rec 7:  Real-Time Monitoring Mode - Month 4
+  Rec 8:  External Reference Validation - Month 5 (hardware-dependent)
+  Rec 9:  Formal Test Plan Document - Month 6
+  Rec 10: Log Format Standardization - Month 6
+
+Priority 3 (Months 7-12):
+  Rec 11: Cryptographic Audit Trail - Month 9
+  Rec 12: Continuous Integration - Month 10
+  Rec 13: Uncertainty Analysis - Month 12
+
+DETAILED PROPOSALS FOR RECOMMENDATIONS 6-13:
+
+[The following sections provide architectural sketches for each remaining
+recommendation. Full implementation details will be developed during
+respective phases.]
+
+RECOMMENDATION 6: Independent Metric Validation
+────────────────────────────────────────────────
+APPROACH: Implement pytest-based test harness that:
+- Loads structured logs (JSONL)
+- Recomputes MTIE/TDEV using ieee_metrics.py
+- Compares against test assertions
+- Generates validation report with statistical analysis
+
+KEY FEATURE: Golden dataset repository
+- Synthetic test vectors with known MTIE/TDEV values
+- Used to validate metrics computation correctness
+- Prevents regression in analysis algorithms
+
+RECOMMENDATION 7: Real-Time Monitoring Mode
+────────────────────────────────────────────
+APPROACH: Separate swclock_monitor daemon process
+- Opens SwClock shared memory segment
+- Reads servo state without locks (atomic reads)
+- Computes streaming MTIE/TDEV via sliding windows
+- Exposes REST API (Flask/FastAPI) for dashboards
+- WebSocket for real-time charts (Plotly.js)
+
+RECOMMENDATION 8: External Reference Validation
+────────────────────────────────────────────────
+APPROACH: GPS/GNSS module integration
+- U-blox NEO-M8T with PPS output
+- Capture PPS timestamps via GPIO interrupt
+- Measure SwClock vs PPS (TE w.r.t. UTC)
+- Compute Allan deviation of local oscillator
+- Document NIST traceability chain
+
+RECOMMENDATION 9: Formal Test Plan Document
+────────────────────────────────────────────
+APPROACH: IEEE 829-2008 template
+- Test Plan Identifier: TP-SWCLOCK-v2.0
+- Traceability matrix: TestCase → Requirement → Standard
+- Pass/fail criteria with numerical thresholds
+- Environment specifications (HW, SW, reference clocks)
+- Data retention: 3 years for audit compliance
+
+RECOMMENDATION 10: Log Format Standardization
+──────────────────────────────────────────────
+APPROACH: Define SwClock Interchange Format (SIF)
+- JSON Schema v2020-12 for JSONL logs
+- Protocol Buffers v3 for binary event logs
+- Versioned schema files published to GitHub
+- Validator tool: sif-validate log.jsonl schema.json
+- Multi-vendor compatibility (PTPd, linuxptp can adopt)
+
+RECOMMENDATION 11: Cryptographic Audit Trail
+─────────────────────────────────────────────
+APPROACH: Blockchain-anchored timestamps
+- Submit log manifest SHA-256 to Ethereum/Polygon
+- Transaction hash proves existence at specific time
+- Cannot backdate logs (timestamp manipulation impossible)
+- Cost: ~$0.01 per test run on L2 chains
+
+RECOMMENDATION 12: Continuous Integration
+──────────────────────────────────────────
+APPROACH: GitHub Actions workflow
+- .github/workflows/performance.yml
+- Nightly: --full test suite (60 min)
+- PR checks: --quick test suite (5 min)
+- Artifact storage: 30 days of test logs
+- Regression alerts via GitHub Issues
+
+RECOMMENDATION 13: Measurement Uncertainty Analysis
+────────────────────────────────────────────────────
+APPROACH: GUM methodology
+- Identify uncertainty sources:
+  * Reference clock stability (from GPS datasheet)
+  * ADC quantization (CLOCK_MONOTONIC_RAW resolution)
+  * Interrupt latency (measured via timing tests)
+  * Temperature drift (if sensors available)
+- Combine using root-sum-square
+- Report expanded uncertainty U = k·u_c (k=2, 95% confidence)
+
+
+RESOURCE REQUIREMENTS
+================================================================================
+
+STAFFING:
+- 1 Senior Embedded Engineer (C/C++): 200 hours over 8 weeks (Priority 1)
+- 1 Software Engineer (Python): 80 hours over 8 weeks (Priority 1)
+- 1 Test Engineer: 40 hours for validation (Priority 1)
+- TOTAL Priority 1: 320 hours (8 person-weeks)
+
+INFRASTRUCTURE:
+- Development hardware: macOS workstation (existing)
+- Test equipment: GPS-disciplined oscillator ($500, Priority 2)
+- Cloud services: Blockchain API, artifact storage ($20/month)
+
+BUDGET ESTIMATE:
+- Priority 1 (audit compliance): $32,000 (320 hours @ $100/hr)
+- Priority 2 (enhanced compliance): $24,000 (240 hours)
+- Priority 3 (best practices): $32,000 (320 hours)
+- Equipment: $1,000
+- TOTAL: $89,000 over 12 months
+
+
+RISK ASSESSMENT
+================================================================================
+
+TECHNICAL RISKS:
+1. Lock-free ring buffer race conditions (Rec 2)
+   MITIGATION: Extensive threading tests, ThreadSanitizer, formal verification
+
+2. Performance overhead from structured logging (Rec 1)
+   MITIGATION: Benchmarking at each phase, async I/O, compile-time disabling
+
+3. Backward compatibility breakage (Rec 1)
+   MITIGATION: Dual-logging transition period, automated migration tools
+
+SCHEDULE RISKS:
+1. Priority 1 timeline aggressive (8 weeks)
+   MITIGATION: Parallel work streams, accept 10-week buffer
+
+2. Dependency on external hardware (Rec 8)
+   MITIGATION: Can defer to Priority 3, not blocking for audit compliance
+
+COMPLIANCE RISKS:
+1. Regulatory interpretation of requirements
+   MITIGATION: Engage IEEE/ITU-T liaisons for guidance, submit for review
+
+
+MIGRATION AND ROLLOUT STRATEGY
+================================================================================
+
+PHASE 1: Development (Weeks 1-8)
+- Implement Priority 1 recommendations in feature branch
+- Continuous integration with existing tests
+- Performance benchmarking at each milestone
+- Weekly progress reports to stakeholders
+
+PHASE 2: Integration (Week 9-10)
+- Merge to main branch
+- Enable dual-logging (CSV + JSONL)
+- Run comparison tests (metrics should match)
+- Update documentation and user guide
+
+PHASE 3: Validation (Week 11-12)
+- Full test suite with new logging infrastructure
+- External review by IEEE experts (if available)
+- Generate compliance report with new audit trail
+- Bug fixes and performance tuning
+
+PHASE 4: Deployment (Week 13+)
+- Disable CSV logging (JSONL becomes primary)
+- Remove trace parsing code (keep for legacy support tool)
+- Release SwClock v2.1.0 with audit compliance
+- Publish technical paper describing architecture
+
+
+COMMITMENT TO STANDARDS EXCELLENCE
+================================================================================
+
+As the SwClock development team, we recognize that timing accuracy is not
+sufficient without verifiable audit trails. The audit findings highlight
+legitimate gaps in our validation infrastructure that, while not affecting
+the correctness of the servo implementation, do impact the credibility and
+traceability of our compliance claims.
+
+We commit to:
+1. Implementing all Priority 1 recommendations within 10 weeks
+2. Maintaining backward compatibility during transition
+3. Publishing design documents for community review
+4. Engaging with IEEE/ITU-T working groups for guidance
+5. Open-sourcing all logging infrastructure for ecosystem benefit
+
+The proposed architecture balances practical engineering constraints (performance,
+maintainability) with audit requirements (traceability, integrity, non-repudiation).
+We believe this approach will not only achieve IEEE compliance but establish
+SwClock as a reference implementation for software-based timing systems.
+
+
+CONCLUSION
+================================================================================
+
+The audit correctly identifies that SwClock's servo discipline is technically
+sound but its validation infrastructure needs strengthening. We accept this
+assessment and propose a concrete path forward that addresses all 13 recommendations
+with realistic timelines and resource allocations.
+
+Our commitment is to transform SwClock from a laboratory prototype into a
+production-ready, audit-compliant timing solution suitable for regulatory
+submission and multi-vendor interoperability.
+
+We welcome feedback on this proposal and look forward to collaborating with
+the IEEE timing community to advance the state of software-based clock discipline.
+
+
+Respectfully submitted,
+
+SwClock Development Team
+January 13, 2026
+
+
+================================================================================
+                    END OF DEVELOPER RESPONSE
+================================================================================

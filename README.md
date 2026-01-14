@@ -9,6 +9,8 @@ A precision software clock implementation for macOS that provides Linux-compatib
 - **PTP Ready**: Designed for PTP daemon integration with frequency and phase adjustment
 - **Time Standards Support**: UTC, TAI (International Atomic Time), and local time formatting
 - **Comprehensive Testing**: Performance characterization and validation test suites
+- **Enhanced Logging**: Comprehensive CSV metadata, servo state logging, SHA-256 integrity protection
+- **Independent Validation**: Metrics recomputation for audit compliance
 - **VS Code Integration**: Full debugging and development environment
 
 ## Prerequisites
@@ -244,6 +246,29 @@ SwClock CURRENT TIME:
 
 [       OK ] SwClockV1.PrintTime (12 ms)
 ```
+
+### Environment Variables
+
+**Logging control:**
+- `SWCLOCK_PERF_CSV=1` - Enable CSV logging with comprehensive metadata headers
+- `SWCLOCK_SERVO_LOG=1` - Enable detailed servo state logging (13 columns)
+- `SWCLOCK_LOG_DIR=path` - Custom log directory (default: `logs/`)
+
+**Usage:**
+```bash
+# Enable all logging features
+SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 ./build/swclock_gtests
+
+# Custom log directory
+SWCLOCK_LOG_DIR=/tmp/swclock_logs ./performance.sh --quick
+```
+
+**Advanced features:**
+- **Enhanced CSV Headers**: 36-line headers with test UUID, system info, compliance targets
+- **Log Integrity**: Automatic SHA-256 sealing via `tools/log_integrity.py`
+- **Independent Validation**: Metrics recomputation via `tools/validate_metrics.py`
+
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md#advanced-logging-and-audit-features) for details.
 
 ### Performance Characteristics
 - **Timing Precision**: 200-4000 nanosecond accuracy typical

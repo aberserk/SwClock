@@ -359,6 +359,34 @@ fi
 echo ""
 
 # ========================================
+# Log Integrity Sealing (Priority 1 Recommendation 3)
+# ========================================
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Log Integrity Protection${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+
+if [ -x "${SCRIPT_DIR}/tools/log_integrity.py" ] && command -v python3 &> /dev/null; then
+    echo -e "${YELLOW}Sealing log files with SHA-256 hashes...${NC}"
+    
+    python3 "${SCRIPT_DIR}/tools/log_integrity.py" seal "${OUTPUT_DIR}" > /dev/null 2>&1
+    
+    if [ -f "${OUTPUT_DIR}/manifest.json" ]; then
+        echo -e "${GREEN}✓ Log manifest created: ${OUTPUT_DIR}/manifest.json${NC}"
+        
+        # Display file count
+        FILE_COUNT=$(python3 -c "import json; print(len(json.load(open('${OUTPUT_DIR}/manifest.json'))['files']))" 2>/dev/null || echo "0")
+        echo -e "  Sealed ${FILE_COUNT} log files"
+    else
+        echo -e "${YELLOW}⚠ Log sealing completed but manifest not found${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Log integrity tool not available (optional feature)${NC}"
+fi
+echo ""
+
+# ========================================
 # Regression Testing (if enabled)
 # ========================================
 

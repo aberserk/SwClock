@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 
 #include "sw_clock.h"
+#include "test_metadata.h"
 
 #ifndef NS_PER_SEC
 #define NS_PER_SEC 1000000000LL
@@ -119,6 +120,83 @@ class TELogger {
 private:
   FILE* fp;
   bool enabled;
+  test_metadata_t metadata;
+  
+  void write_csv_header(const char* test_name) {
+    // Collect comprehensive metadata
+    collect_test_metadata(
+      &metadata,
+      test_name,
+      200.0,  // Kp
+      8.0,    // Ki
+      200.0,  // max_ppm
+      10000000LL,  // poll_ns (10ms)
+      20000LL      // phase_eps_ns (20µs)
+    );
+    
+    // Write comprehensive RFC-style header
+    fprintf(fp,
+      "# ========================================\n"
+      "# SwClock Performance Test CSV Export\n"
+      "# ========================================\n"
+      "#\n"
+      "# Test Identification:\n"
+      "#   Test Name:        %s\n"
+      "#   Test Run ID:      %s\n"
+      "#   SwClock Version:  %s\n"
+      "#   Start Time (UTC): %s\n"
+      "#\n"
+      "# Configuration:\n"
+      "#   Kp (ppm/s):       %.3f\n"
+      "#   Ki (ppm/s²):      %.3f\n"
+      "#   Max PPM:          %.1f\n"
+      "#   Poll Interval:    %lld ns (%.1f Hz)\n"
+      "#   Phase Epsilon:    %lld ns (%.1f µs)\n"
+      "#\n"
+      "# System Information:\n"
+      "#   Operating System: %s %s\n"
+      "#   CPU:              %s\n"
+      "#   CPU Cores:        %d\n"
+      "#   Hostname:         %s\n"
+      "#   Reference Clock:  %s\n"
+      "#   System Load:      %.2f\n"
+      "#\n"
+      "# Data Format:\n"
+      "#   Columns:          timestamp_ns, te_ns\n"
+      "#   Sample Rate:      %.3f Hz\n"
+      "#   Timestamp Base:   CLOCK_MONOTONIC_RAW at test start\n"
+      "#   TE Definition:    (SwClock - Reference) in nanoseconds\n"
+      "#\n"
+      "# Compliance Targets:\n"
+      "#   Standard:         %s\n"
+      "#   MTIE(1s):         < 100 µs\n"
+      "#   MTIE(10s):        < 200 µs\n"
+      "#   MTIE(30s):        < 300 µs\n"
+      "#   TDEV(0.1s):       < 20 µs\n"
+      "#   TDEV(1s):         < 40 µs\n"
+      "#   TDEV(10s):        < 80 µs\n"
+      "#\n"
+      "# ========================================\n"
+      "timestamp_ns,te_ns\n",
+      metadata.test_name,
+      metadata.test_run_id,
+      metadata.swclock_version,
+      metadata.start_time_iso8601,
+      metadata.kp_ppm_per_s,
+      metadata.ki_ppm_per_s2,
+      metadata.max_ppm,
+      metadata.poll_ns, 1e9 / metadata.poll_ns,
+      metadata.phase_eps_ns, metadata.phase_eps_ns / 1000.0,
+      metadata.os_name, metadata.os_version,
+      metadata.cpu_model,
+      metadata.cpu_count,
+      metadata.hostname,
+      metadata.reference_clock,
+      metadata.system_load_avg,
+      1e9 / PERF_POLL_NS,
+      metadata.compliance_standard
+    );
+  }
   
 public:
   TELogger(const char* test_name) : fp(nullptr), enabled(csv_logging_enabled()) {
@@ -134,11 +212,8 @@ public:
       return;
     }
     
-    // Write CSV header
-    fprintf(fp, "# Performance Test CSV Export\n");
-    fprintf(fp, "# Test: %s\n", test_name);
-    fprintf(fp, "# Columns: timestamp_ns, te_ns\n");
-    fprintf(fp, "timestamp_ns,te_ns\n");
+    // Write comprehensive CSV header with metadata
+    write_csv_header(test_name);
     fflush(fp);
     
     printf("  CSV logging to: %s\n", filename);
@@ -234,6 +309,21 @@ TEST(Perf, DisciplineTEStats_MTIE_TDEV){
 
   // Initialize CSV logger
   TELogger csv_logger("Perf_DisciplineTEStats_MTIE_TDEV");
+
+  // Enable servo logging if requested (Priority 1 Recommendation 5)
+  const char* log_dir = get_log_dir();
+  if (getenv("SWCLOCK_SERVO_LOG")) {
+    char servo_log_path[512];
+    time_t now = time(NULL);
+    struct tm* tinfo = localtime(&now);
+    char datetime_buf[64];
+    strftime(datetime_buf, sizeof(datetime_buf), "%Y%m%d-%H%M%S", tinfo);
+    snprintf(servo_log_path, sizeof(servo_log_path),
+             "%s/servo_state_%s_DisciplineTEStats.csv",
+             log_dir, datetime_buf);
+    swclock_start_log(clk, servo_log_path);
+    printf("  Servo logging to: %s\n", servo_log_path);
+  }
 
   // Capture references
   struct timespec sw0, raw0;

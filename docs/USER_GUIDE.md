@@ -633,6 +633,274 @@ plt.savefig('allan_deviation.png')
 
 ---
 
+## Advanced Logging and Audit Features
+
+### Enhanced CSV Metadata Headers
+
+**New in v2.1**: CSV log files now include comprehensive metadata headers with test identification, system information, and compliance targets.
+
+**Header contents (36 lines):**
+- **Test Identification**: Test name, UUID, SwClock version, timestamp
+- **Configuration**: Kp, Ki, max_ppm, poll interval, phase epsilon
+- **System Information**: OS, CPU model, hostname, reference clock, load average
+- **Data Format**: Column descriptions, sample rate, timestamp base
+- **Compliance Targets**: ITU-T G.8260 Class C limits for MTIE/TDEV
+
+**Example header:**
+```csv
+# ========================================
+# SwClock Performance Test CSV Export
+# ========================================
+#
+# Test Identification:
+#   Test Name:        Perf_DisciplineTEStats_MTIE_TDEV
+#   Test Run ID:      550e8400-e29b-41d4-a716-446655440000
+#   SwClock Version:  v2.0.0
+#   Start Time (UTC): 2026-01-13T18:32:49Z
+#
+# Configuration:
+#   Kp (ppm/s):       200.000
+#   Ki (ppm/s²):      8.000
+#   Max PPM:          200.0
+#   Poll Interval:    10000000 ns (100.0 Hz)
+#   Phase Epsilon:    20000 ns (20.0 µs)
+#
+# System Information:
+#   Operating System: Darwin 24.2.0
+#   CPU:              Apple M1 Max
+#   CPU Cores:        10
+#   Hostname:         macbook.local
+#   Reference Clock:  CLOCK_MONOTONIC_RAW
+#   System Load:      2.34
+#
+# Compliance Targets:
+#   Standard:         ITU-T G.8260 Class C
+#   MTIE(1s):         < 100 µs
+#   MTIE(10s):        < 200 µs
+#   MTIE(30s):        < 300 µs
+#
+timestamp_ns,te_ns
+```
+
+**Benefits:**
+- **Audit Trail**: Complete test provenance for regulatory compliance
+- **Reproducibility**: All configuration parameters documented
+- **Traceability**: UUID allows tracking across analysis tools
+- **Context**: System state captured for result interpretation
+
+### Servo State Logging
+
+**Enable detailed servo state logging** with the `SWCLOCK_SERVO_LOG` environment variable:
+
+```bash
+# Enable servo state logging for performance tests
+SWCLOCK_SERVO_LOG=1 ./performance.sh --quick
+
+# Or for individual test runs
+SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 ./build/swclock_gtests
+```
+
+**Servo log contents (13 columns):**
+1. `timestamp_ns` - CLOCK_MONOTONIC_RAW timestamp
+2. `base_rt_ns` - REALTIME base (adjusted)
+3. `base_mono_ns` - MONOTONIC base (disciplined)
+4. `freq_scaled_ppm` - Base frequency bias (Linux scaled units)
+5. `pi_freq_ppm` - PI controller output (ppm)
+6. `pi_int_error_s` - Integral error accumulator (seconds)
+7. `remaining_phase_ns` - Outstanding phase to slew (ns)
+8. `pi_servo_enabled` - Boolean (1=enabled, 0=disabled)
+9. `maxerror` - Maximum error estimate (µs)
+10. `esterror` - Estimated error (µs)
+11. `constant` - Time constant
+12. `tick` - Tick value
+13. `tai` - TAI offset (seconds)
+
+**Use cases:**
+- **Debugging**: Analyze servo behavior during transients
+- **Tuning**: Optimize Kp/Ki parameters for specific conditions
+- **Audit**: Verify servo operates within design parameters
+- **Research**: Study PI controller dynamics
+
+**Performance impact:** Minimal (<1% CPU) when disabled, ~15 KB/s write rate when enabled.
+
+**Log location:** `logs/servo_state_YYYYMMDD-HHMMSS_TestName.csv`
+
+### Log Integrity Protection
+
+**Automatic log sealing** with SHA-256 hashing ensures tamper detection for audit compliance.
+
+**Enabled automatically** in `performance.sh` after test completion:
+
+```bash
+# Integrity protection happens automatically
+./performance.sh --quick
+
+# Creates: performance/performance_YYYYMMDD-HHMMSS/manifest.json
+```
+
+**Manifest format:**
+```json
+{
+  "test_run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-01-13T18:32:49Z",
+  "files": [
+    {
+      "path": "raw_data/test1.csv",
+      "sha256": "a3f8b2e9c1d4...",
+      "size": 12345
+    },
+    {
+      "path": "test_output.log",
+      "sha256": "b2e9c1d4f5a6...",
+      "size": 67890
+    }
+  ]
+}
+```
+
+**Manual integrity verification:**
+
+```bash
+# Seal logs manually
+python3 tools/log_integrity.py seal performance/test_run/
+
+# Verify integrity
+python3 tools/log_integrity.py verify performance/test_run/manifest.json
+
+# Output:
+# ✓ test_output.log: OK
+# ✓ raw_data/test1.csv: OK
+# ✓ metrics.json: OK
+# All files verified successfully
+```
+
+**Features:**
+- **Tamper Detection**: Any modification invalidates SHA-256 hash
+- **Completeness**: Verifies all logged files present
+- **Timestamps**: Manifest includes creation time
+- **Optional Signatures**: Supports RSA signatures for non-repudiation
+
+**Use in validation workflow:**
+```bash
+# Before analysis, verify integrity
+if python3 tools/log_integrity.py verify results/manifest.json; then
+    python3 tools/analyze_performance_logs.py results/
+else
+    echo "Error: Log integrity compromised"
+    exit 1
+fi
+```
+
+### Independent Metrics Validation
+
+**Break circular validation** by recomputing metrics from raw data:
+
+```bash
+# Validate single CSV file
+python3 tools/validate_metrics.py logs/test.csv
+
+# Validate all CSV files in directory
+python3 tools/validate_metrics.py --dir logs/
+
+# With expected values (assertions)
+python3 tools/validate_metrics.py logs/test.csv --assertions expected.json
+
+# Generate JSON report
+python3 tools/validate_metrics.py --dir logs/ --output validation_report.json
+```
+
+**What it does:**
+1. Loads raw TE time series from CSV
+2. Recomputes MTIE/TDEV using `ieee_metrics.py`
+3. Compares against test assertions (if provided)
+4. Reports validation errors with tolerance checking
+
+**Example output:**
+```
+Validating: 20260113-183249-Perf_DisciplineTEStats.csv... ✓ PASS
+
+Validation Report
+==================
+
+Computed Metrics:
+  te_stats:
+    mean_te_ns: -274.1
+    std_te_ns: 406.9
+    max_te_ns: 9543.0
+    min_te_ns: -9360.0
+  mtie:
+    mtie_1s: 9543.0 ns
+    mtie_10s: 9360.0 ns
+    mtie_30s: 9415.0 ns
+  tdev:
+    tdev_0.1s: 711.0 ns
+    tdev_1s: 653.5 ns
+    tdev_10s: 382.4 ns
+
+All metrics within tolerance (1.0%)
+```
+
+**Assertions file format:**
+```json
+{
+  "mtie_1s": 9543.0,
+  "mtie_10s": 9360.0,
+  "tdev_1s": 653.5,
+  "mean_te_ns": -274.1
+}
+```
+
+**Use cases:**
+- **Regression Testing**: Verify metrics haven't degraded
+- **Cross-Validation**: Independent check of test results
+- **Audit Compliance**: Demonstrate independent verification
+- **CI/CD**: Automated validation in build pipelines
+
+**Tolerance control:**
+```bash
+# Default 1% tolerance
+python3 tools/validate_metrics.py logs/test.csv
+
+# Stricter 0.1% tolerance
+python3 tools/validate_metrics.py logs/test.csv --tolerance=0.1
+
+# Relaxed 5% tolerance
+python3 tools/validate_metrics.py logs/test.csv --tolerance=5.0
+```
+
+### Logging Best Practices
+
+**For development and debugging:**
+```bash
+# Enable all logging
+SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 ./performance.sh --quick
+```
+
+**For regression testing:**
+```bash
+# Enable CSV only, verify integrity
+SWCLOCK_PERF_CSV=1 ./performance.sh --quick
+python3 tools/validate_metrics.py --dir performance/latest/raw_data/
+```
+
+**For audit compliance:**
+```bash
+# Full logging with integrity sealing (automatic)
+./performance.sh --full
+
+# Verify and archive
+python3 tools/log_integrity.py verify performance/latest/manifest.json
+tar czf audit_$(date +%Y%m%d).tar.gz performance/latest/
+```
+
+**Storage considerations:**
+- CSV logs: ~15 KB per 60s test
+- Servo logs: ~90 KB per 60s test (when enabled)
+- Manifest: <5 KB
+- Total: ~110 KB per test with full logging
+
+---
+
 ## Understanding Compliance Levels
 
 ### ITU-T G.8260 Classes

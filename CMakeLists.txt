@@ -25,10 +25,12 @@ endif()
 set(SWCLOCK_SOURCES
     src/sw_clock/sw_clock.c
     src/sw_clock/sw_clock_utilities.c
+    src/sw_clock/sw_clock_structured_log.c
 )
 
 set(SWCLOCK_HEADERS
     src/sw_clock/sw_clock.h
+    src/sw_clock/sw_clock_structured_log.h
 )
 
 
@@ -65,7 +67,7 @@ if(GTest_FOUND AND GTEST_SOURCES)
     add_executable(swclock_gtests ${GTEST_SOURCES})
     # Only link gtest_main which automatically includes gtest
     target_link_libraries(swclock_gtests PRIVATE swclock GTest::gtest_main)
-    target_include_directories(swclock_gtests PRIVATE src/sw_clock )
+    target_include_directories(swclock_gtests PRIVATE src/sw_clock src-gtests)
     
     # Ensure logs directory exists for test output in project root
     add_custom_command(TARGET swclock_gtests POST_BUILD
