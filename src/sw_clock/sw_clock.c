@@ -628,6 +628,28 @@ static void* swclock_poll_thread_main(void* arg) {
             pthread_mutex_unlock(&c->lock);
         }
         
+        // JSON-LD ServoStateUpdate logging (independent of CSV logging)
+        if (c->jsonld_logger && servo_log_enabled) {
+            pthread_mutex_lock(&c->lock);
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            
+            // Calculate phase and time errors
+            int64_t phase_error_ns = c->remaining_phase_ns;
+            struct timespec sys_realtime, sw_realtime;
+            clock_gettime(CLOCK_REALTIME, &sys_realtime);
+            swclock_gettime(c, CLOCK_REALTIME, &sw_realtime);
+            int64_t time_error_ns = ts_to_ns(&sys_realtime) - ts_to_ns(&sw_realtime);
+            
+            swclock_jsonld_log_servo(c->jsonld_logger, timestamp_ns,
+                scaledppm_to_ppm(c->freq_scaled_ppm),
+                phase_error_ns, time_error_ns,
+                c->pi_freq_ppm, c->pi_int_error_s,
+                c->pi_servo_enabled);
+            pthread_mutex_unlock(&c->lock);
+        }
+        
         // Real-time monitoring: Add TE sample to circular buffer (Rec 7)
         if (c->monitoring_enabled && c->monitor) {
             // Compute Time Error: Reference_Time - SwClock_Disciplined_Time
