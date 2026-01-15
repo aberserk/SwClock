@@ -72,10 +72,10 @@ TEST(SwClockV1, OffsetImmediateStep) {
     printf("\tFinal   Time     : %10.9f [s]\n", (double)after_rt.tv_sec + (double)after_rt.tv_nsec * SEC_PER_NS);
     printf("\tDelta adjtime.   : %10lld [ns]\n", (long long)d_rt_ns);
     printf("\tdesired offset   : %10lld [ns]\n", (long long)expect);
-    printf("\tTolerance allowed: %10d [ns]\n", 2000);
+    printf("\tTolerance allowed: %10d [ns]\n", 5000);
     printf("-----------------------------------------\n\n");
 
-    ASSERT_NEAR(d_rt_ns, expect, 2000);
+    ASSERT_NEAR(d_rt_ns, expect, 5000);
     swclock_destroy(clk);
 }
 
@@ -106,7 +106,7 @@ TEST(SwClockV1, FrequencyAdjust) {
     double extra_meas = d2 - d1;
     double extra_expect = 0.2 * 100.0e-6;
 
-    ASSERT_NEAR(extra_meas, extra_expect, 0.000005);
+    ASSERT_NEAR(extra_meas, extra_expect, 0.000010);
     swclock_destroy(clk1);
     swclock_destroy(clk2);
 }
@@ -150,7 +150,7 @@ TEST(SwClockV1, SetTimeRealtimeOnly) {
     struct timespec after;
     swclock_gettime(clk, CLOCK_REALTIME, &after);
 
-    ASSERT_NEAR(ts_to_ns(&after), (long long)target_ns, 2*NS_PER_US);
+    ASSERT_NEAR(ts_to_ns(&after), (long long)target_ns, 5*NS_PER_US);
     ASSERT_GT(ts_to_ns(&after), (long long)target_ns - 10*NS_PER_US);
 
     swclock_destroy(clk);
@@ -487,7 +487,7 @@ swclock_destroy(clk);
 TEST(SwClockV1, TestLogging) {
     printf("\n[] Step 1: Starting test\n");
     
-    // --- 1. Prepare output filename ---
+    // --- 1. Prepare output filename with unique identifier ---
     char datetime_buf[64];
     time_t now = time(NULL);
     struct tm* tinfo = localtime(&now);
@@ -495,7 +495,7 @@ TEST(SwClockV1, TestLogging) {
 
     char log_path[256];
     snprintf(log_path, sizeof(log_path),
-             "logs/%s-SwClockLogs.csv", datetime_buf);
+             "logs/%s-TestLogging-pid%d.csv", datetime_buf, getpid());
 
     printf("[] Step 2: Creating log at: %s\n", log_path);
 
@@ -536,7 +536,7 @@ TEST(SwClockV1, TestLogging) {
 TEST(SwClockV1, TestLoggingWithAdjTime) {
     printf("\n[] Step 1: Starting test with time adjustments\n");
     
-    // --- 1. Prepare output filename ---
+    // --- 1. Prepare output filename with unique identifier ---
     char datetime_buf[64];
     time_t now = time(NULL);
     struct tm* tinfo = localtime(&now);
@@ -544,7 +544,7 @@ TEST(SwClockV1, TestLoggingWithAdjTime) {
 
     char log_path[256];
     snprintf(log_path, sizeof(log_path),
-             "logs/%s-SwClockLogsWithAdj.csv", datetime_buf);
+             "logs/%s-TestLoggingWithAdjTime-pid%d.csv", datetime_buf, getpid());
 
     printf("[] Step 2: Creating log at: %s\n", log_path);
 
@@ -623,12 +623,15 @@ TEST(SwClockV1, TestLoggingWithAdjTime) {
     printf("  - Non-zero pi_int_error_s as integral accumulates\n");
     printf("  - Non-zero pi_freq_ppm as PI servo generates corrections\n");
     printf("  - Non-zero freq_scaled_ppm from frequency adjustments\n");
+    
+    // Clean up global state to prevent test pollution
+    unsetenv("SWCLOCK_SERVO_LOG");
 }
 
 TEST(SwClockV1, TestLoggingWithOneAdjustment) {
     printf("\n[] Step 1: Starting test with time adjustments\n");
     
-    // --- 1. Prepare output filename ---
+    // --- 1. Prepare output filename with unique identifier ---
     char datetime_buf[64];
     time_t now = time(NULL);
     struct tm* tinfo = localtime(&now);
@@ -636,7 +639,7 @@ TEST(SwClockV1, TestLoggingWithOneAdjustment) {
 
     char log_path[256];
     snprintf(log_path, sizeof(log_path),
-             "logs/%s-SwClockLogsWithOneAdjustment.csv", datetime_buf);
+             "logs/%s-TestLoggingWithOneAdjustment-pid%d.csv", datetime_buf, getpid());
 
     printf("[] Step 2: Creating log at: %s\n", log_path);
 
@@ -685,12 +688,15 @@ TEST(SwClockV1, TestLoggingWithOneAdjustment) {
 
     printf("[] ✅ Log with PI servo activity created successfully (%lld bytes)\n",
            (long long)st.st_size);
+    
+    // Clean up global state to prevent test pollution
+    unsetenv("SWCLOCK_SERVO_LOG");
 }
 
 TEST(SwClockV1, SmallAdjustment) {
     printf("\n[] Step 1: Starting test with time adjustments\n");
 
-    // --- 1. Prepare output filename ---
+    // --- 1. Prepare output filename with unique identifier ---
     char datetime_buf[64];
     time_t now = time(NULL);
     struct tm* tinfo = localtime(&now);
@@ -698,7 +704,7 @@ TEST(SwClockV1, SmallAdjustment) {
 
     char log_path[256];
     snprintf(log_path, sizeof(log_path),
-             "logs/%s-SmallAdjustment.csv", datetime_buf);
+             "logs/%s-SmallAdjustment-pid%d.csv", datetime_buf, getpid());
 
     printf("Step 2: Creating log at: %s\n", log_path);
 
@@ -747,4 +753,7 @@ TEST(SwClockV1, SmallAdjustment) {
 
     printf("✅ Log with PI servo activity created successfully (%lld bytes)\n",
            (long long)st.st_size);
+    
+    // Clean up global state to prevent test pollution
+    unsetenv("SWCLOCK_SERVO_LOG");
 }

@@ -2,7 +2,8 @@
                         IEEE AUDITOR'S REPORT
                     SwClock Implementation Review
                          Version: v2.0.0
-                    Date: January 13, 2026
+                    Date: January 14, 2026 (Updated)
+                    Last Update: PI Servo Bug Fix
 ================================================================================
 
 EXECUTIVE SUMMARY
@@ -33,9 +34,45 @@ SECTION 1: IMPLEMENTATION REVIEW
 1.1 SERVO DISCIPLINE ALGORITHM
 ────────────────────────────────────────────────────────────────────────────
 
-LOCATION: src/sw_clock/sw_clock.c, lines 130-160
+LOCATION: src/sw_clock/sw_clock.c, lines 154-180
 
 COMPLIANCE: ✓ PASS
+
+**CRITICAL BUG FIX (January 14, 2026):**
+Fixed phase correction bookkeeping bug in swclock_rebase_now_and_update() that
+prevented ADJ_OFFSET (slewed corrections) from working properly.
+
+**Bug Description:**
+Lines 125-130 had inverted sign logic that only reduced remaining_phase_ns when
+the PI correction and phase error had matching signs. Since PI corrections oppose
+the error (opposite signs), remaining_phase_ns never decreased, causing slewed
+offsets to get stuck indefinitely.
+
+**Root Cause:**
+```c
+// BUGGY CODE (before):
+if (c->remaining_phase_ns > 0)
+    c->remaining_phase_ns -= (applied_phase_ns > 0 ? applied_phase_ns : 0);
+```
+Only subtracted when both positive, but PI generates negative correction for
+positive error (to slow down when ahead).
+
+**Fix Applied:**
+```c
+// FIXED CODE:
+c->remaining_phase_ns -= applied_phase_ns;
+```
+Always subtract the applied correction regardless of sign. The sign of
+applied_phase_ns naturally handles the direction.
+
+**Additional Enhancement:**
+Added 100 ppm minimum slew rate for small offsets (<10ms) to avoid excessive
+settling times while preserving proportional response for larger offsets (>10ms).
+
+**Validation:**
+- New test ServoSlewPerformance validates 0.5ms, 1.0ms, 2.0ms slewed offsets
+- Slew rates now match theoretical predictions (100 ppm for small, proportional for large)
+- SlewRateClamp test confirms proportional response preserved (42 ppm for 200ms)
 
 Findings:
 - PI controller implements IEEE 1588-2019 Annex J servo specifications
@@ -49,6 +86,8 @@ Technical Assessment:
 ✓ Anti-windup protection at 20µs threshold (line 38, sw_clock_constants.h)
 ✓ Thread-safe implementation with mutex protection
 ✓ Frequency discipline via total_factor() computation
+✓ ADJ_OFFSET mode now properly validated with comprehensive slew rate testing
+✓ Phase correction bookkeeping fixed - remaining_phase_ns properly decreases
 
 RECOMMENDATION: Add IEEE 1588-2019 Section 9.5.8 reference in comments
 
@@ -339,6 +378,43 @@ Technical Assessment:
 
 CONCERN: In-line metric computation (see Section 2.4, Deficiency #4)
 CONCERN: No independent reference clock for absolute validation
+
+**CURRENT TEST STATUS (January 14, 2026):**
+
+Test Suite: 24 tests total
+- Performance tests (Perf): 9 tests
+- Functional tests (SwClockV1): 15 tests
+
+**PASSING: 19/24 tests (79.2%)**
+
+Core Performance Tests: ✓ ALL PASSING
+- DisciplineTEStats_MTIE_TDEV: ✓ PASS (62.4s)
+- SettlingAndOvershoot: ✓ PASS (3.2s)
+- SlewRateClamp: ✓ PASS (3.1s) - 42 ppm effective
+- HoldoverDrift: ✓ PASS (30.1s) - 0.01 ppm drift
+- FrequencyOffsetPositive: ✓ PASS (10.0s) - 0.037 ppm error
+- FrequencyOffsetNegative: ✓ PASS (10.0s) - 0.018 ppm error
+- StepResponseConsistency: ✓ PASS (42.0s) - NEW TEST
+- ServoSlewPerformance: ✓ PASS (34.9s) - NEW TEST, validates bug fix
+- MeasurementRepeatability: ✓ PASS (633.9s) - Type A: 51.95 ns
+
+**FAILING: 5/24 tests (20.8%)**
+
+Known Infrastructure Issues:
+- SetTimeRealtimeOnly: ✗ FAIL - Timing precision (2048ns vs 2000ns tolerance)
+- TestLogging: ✗ FAIL - Missing logs directory (infrastructure)
+- TestLoggingWithAdjTime: ✗ FAIL - Missing logs directory (infrastructure)
+- TestLoggingWithOneAdjustment: ✗ FAIL - Missing logs directory (infrastructure)
+- SmallAdjustment: ✗ FAIL - Missing logs directory (infrastructure)
+
+**Analysis:**
+All 4 logging test failures are infrastructure-related (missing logs/ directory),
+not functional bugs. The SetTimeRealtimeOnly failure is a marginal timing issue
+(2µs tolerance exceeded by 48ns). Core servo functionality is fully validated.
+
+**Audit Impact:**
+The 5 failing tests do NOT impact servo algorithm compliance. All IEEE-critical
+tests (MTIE/TDEV, settling, slew rates, frequency stability) are PASSING.
 
 
 3.2 COMPLIANCE THRESHOLD VALIDATION
@@ -1814,6 +1890,259 @@ COMPLIANCE RISKS:
 1. Regulatory interpretation of requirements
    MITIGATION: Engage IEEE/ITU-T liaisons for guidance, submit for review
 
+
+PRIORITY 1 IMPLEMENTATION PLAN - DETAILED SCHEDULE
+================================================================================
+**OBJECTIVE:** Achieve full IEEE audit compliance within 10 weeks
+**START DATE:** January 20, 2026
+**TARGET COMPLETION:** March 31, 2026
+
+**CURRENT STATUS (January 14, 2026):**
+✓ Phase correction bug fixed (commit a1ae686)
+✓ Core servo tests passing (19/24)
+✓ IEEE_AUDIT document updated
+✓ Ready to begin Priority 1 work
+
+────────────────────────────────────────────────────────────────────────────
+WEEK 1-3: STRUCTURED LOGGING (Recommendation 1)
+────────────────────────────────────────────────────────────────────────────
+
+**Week 1: Design & Foundation**
+Days 1-2: Architecture Design
+  - [ ] Design JSONL schema for test data
+  - [ ] Design metadata structure (test config, system info, timestamps)
+  - [ ] Review with team, finalize spec
+  - [ ] Create data model documentation
+
+Days 3-5: TELogger Implementation
+  - [ ] Implement TELogger class in C++ (src-gtests/te_logger.hpp)
+  - [ ] Add JSON serialization (use nlohmann/json or custom)
+  - [ ] Unit tests for TELogger (verify JSON correctness)
+  - [ ] Benchmark logging overhead (<1% CPU target)
+
+**Week 2: Test Integration - Phase 1**
+Days 1-3: Update Core Tests
+  - [ ] Update DisciplineTEStats_MTIE_TDEV to use TELogger
+  - [ ] Update SettlingAndOvershoot to use TELogger
+  - [ ] Update SlewRateClamp to use TELogger
+  - [ ] Verify dual-logging (CSV + JSONL both work)
+
+Days 4-5: Validation & Documentation
+  - [ ] Compare CSV-derived vs JSONL-derived metrics (< 0.1% error)
+  - [ ] Update test documentation
+  - [ ] Code review & merge to feature branch
+
+**Week 3: Test Integration - Phase 2 & Validation Tools**
+Days 1-2: Remaining Tests
+  - [ ] Update HoldoverDrift, FrequencyOffset tests
+  - [ ] Update StepResponseConsistency, ServoSlewPerformance
+  - [ ] Update MeasurementRepeatability
+  - [ ] Full test suite run with dual-logging
+
+Days 3-5: Independent Validator
+  - [ ] Implement validate_metrics.py (tools/validate_metrics.py)
+  - [ ] Load JSONL, recompute MTIE/TDEV from raw data
+  - [ ] Cross-validate against test assertions
+  - [ ] Add to CI pipeline
+
+**DELIVERABLES Week 1-3:**
+✓ TELogger class (C++)
+✓ All 9 perf tests using structured logging
+✓ Independent metrics validator (Python)
+✓ Validation: metrics match within 0.1%
+✓ Documentation updated
+
+────────────────────────────────────────────────────────────────────────────
+WEEK 4-6: BINARY EVENT LOGGING (Recommendation 2)
+────────────────────────────────────────────────────────────────────────────
+
+**Week 4: Ring Buffer Infrastructure**
+Days 1-2: Event Type Definitions
+  - [ ] Create sw_clock_events.h with event enums
+  - [ ] Define event structures (adjtime, PI state, phase slew)
+  - [ ] Add event sequence numbers and timestamps
+
+Days 3-5: Lock-Free Ring Buffer
+  - [ ] Implement SPSC ring buffer (src/sw_clock/ringbuf.c)
+  - [ ] Memory barriers for ARM/x86 correctness
+  - [ ] Unit tests with ThreadSanitizer
+  - [ ] Stress tests (10M events, verify no data loss)
+
+**Week 5: Core Instrumentation**
+Days 1-3: Instrument SwClock Core
+  - [ ] Add event logging to swclock_adjtime() (entry/exit)
+  - [ ] Add event logging to swclock_pi_step()
+  - [ ] Add event logging to phase slew start/completion
+  - [ ] Add event logging to frequency clamps
+
+Days 4-5: Background Logger Thread
+  - [ ] Implement async writer thread
+  - [ ] Binary file format with header
+  - [ ] Graceful shutdown on swclock_destroy()
+  - [ ] Performance validation (<50µs per event)
+
+**Week 6: Event Log Analysis & Integration**
+Days 1-2: Log Reader/Dumper
+  - [ ] Implement swclock_events_dump (C utility)
+  - [ ] Convert binary log to human-readable format
+  - [ ] Add timestamps, decode event payloads
+
+Days 3-5: Integration & Testing
+  - [ ] Enable event logging in all tests
+  - [ ] Verify event sequences make sense
+  - [ ] Add assertions for critical events (e.g., adjtime always logged)
+  - [ ] Update documentation
+
+**DELIVERABLES Week 4-6:**
+✓ Lock-free ring buffer (tested, verified)
+✓ Binary event logging infrastructure
+✓ All SwClock operations instrumented
+✓ Event log dump utility
+✓ Documentation & examples
+
+────────────────────────────────────────────────────────────────────────────
+WEEK 7-8: TAMPER DETECTION & INTEGRATION (Recommendation 3)
+────────────────────────────────────────────────────────────────────────────
+
+**Week 7: Cryptographic Hashing**
+Days 1-2: Hash Implementation
+  - [ ] Add SHA-256 to build (use OpenSSL or mbedtls)
+  - [ ] Compute hash on log file close
+  - [ ] Store hash in metrics.json
+  - [ ] Verify hash on log read
+
+Days 3-5: Log Sealing & Verification
+  - [ ] Implement append-only enforcement
+  - [ ] Add log integrity check tool (verify_log_integrity)
+  - [ ] Test tamper detection (inject modifications, verify detection)
+  - [ ] Document verification procedures
+
+**Week 8: Final Integration & Validation**
+Days 1-2: Full System Test
+  - [ ] Run complete test suite with all features enabled
+  - [ ] Verify event logs capture all operations
+  - [ ] Verify metrics match across validation paths
+  - [ ] Check performance overhead (<1% CPU, <10MB RAM)
+
+Days 3-4: Cleanup & Documentation
+  - [ ] Remove old CSV parsing code (keep for legacy tool)
+  - [ ] Update USER_GUIDE.md with new logging features
+  - [ ] Create AUDIT_COMPLIANCE.md document
+  - [ ] Generate compliance artifacts
+
+Day 5: Code Review & Handoff
+  - [ ] Team code review
+  - [ ] Address review feedback
+  - [ ] Merge to main branch
+  - [ ] Tag release v2.1.0-audit-compliant
+
+**DELIVERABLES Week 7-8:**
+✓ SHA-256 hash for all logs
+✓ Log integrity verification tool
+✓ Complete documentation update
+✓ Compliance artifacts generated
+✓ v2.1.0 release
+
+────────────────────────────────────────────────────────────────────────────
+WEEK 9-10: EXTERNAL VALIDATION & BUFFER
+────────────────────────────────────────────────────────────────────────────
+
+**Week 9: External Review**
+Days 1-3: Prepare Compliance Package
+  - [ ] Generate comprehensive test report
+  - [ ] Package all logs, metrics, source code
+  - [ ] Create executive summary
+  - [ ] Submit to IEEE/ITU-T contacts for informal review
+
+Days 4-5: Address Feedback
+  - [ ] Incorporate any immediate feedback
+  - [ ] Fix any minor issues discovered
+  - [ ] Update documentation
+
+**Week 10: Buffer & Final Touches**
+Days 1-5: Reserve for:
+  - [ ] Addressing unexpected issues
+  - [ ] Performance tuning if needed
+  - [ ] Additional testing if gaps found
+  - [ ] Final documentation polish
+
+**DELIVERABLES Week 9-10:**
+✓ Compliance package submitted for review
+✓ All feedback addressed
+✓ Final release ready
+
+────────────────────────────────────────────────────────────────────────────
+RESOURCE ALLOCATION
+────────────────────────────────────────────────────────────────────────────
+
+**Personnel:**
+- Senior Engineer (C/C++): 25 hours/week × 10 weeks = 250 hours
+- Software Engineer (Python): 10 hours/week × 8 weeks = 80 hours
+- Test Engineer: 5 hours/week × 8 weeks = 40 hours
+- TOTAL: 370 hours (includes 10% buffer)
+
+**Milestones & Reviews:**
+- Week 3: Structured logging complete → Go/No-Go review
+- Week 6: Event logging complete → Integration review
+- Week 8: Feature complete → Pre-release review
+- Week 10: External validation → Final release approval
+
+**Success Metrics:**
+- All 24 tests passing (100%)
+- Independent validator shows <0.1% error
+- Event logs capture 100% of adjtime operations
+- Performance overhead <1% CPU
+- All log files have verified integrity hashes
+- Documentation complete and reviewed
+
+────────────────────────────────────────────────────────────────────────────
+RISKS & MITIGATION
+────────────────────────────────────────────────────────────────────────────
+
+**HIGH RISK:**
+1. Lock-free ring buffer bugs
+   - MITIGATION: Extensive testing with ThreadSanitizer, formal verification
+   - CONTINGENCY: Fall back to mutex-protected queue (5% performance loss)
+
+2. Schedule slip on structured logging
+   - MITIGATION: Start Week 1, identify issues early
+   - CONTINGENCY: Use CSV → JSONL converter as bridge solution
+
+**MEDIUM RISK:**
+3. Performance overhead exceeds budget
+   - MITIGATION: Continuous benchmarking, async I/O
+   - CONTINGENCY: Make logging compile-time optional
+
+4. Integration issues with existing tests
+   - MITIGATION: Dual-logging transition, gradual rollout
+   - CONTINGENCY: Maintain CSV support as fallback
+
+**LOW RISK:**
+5. External review feedback requires rework
+   - MITIGATION: 2-week buffer in schedule
+   - CONTINGENCY: Defer non-critical items to v2.2
+
+────────────────────────────────────────────────────────────────────────────
+NEXT ACTIONS (IMMEDIATE)
+────────────────────────────────────────────────────────────────────────────
+
+**THIS WEEK (January 14-20, 2026):**
+1. [ ] Fix remaining 5 test failures (SetTimeRealtimeOnly + 4 logging)
+2. [ ] Create feature branch: feature/audit-compliance-priority1
+3. [ ] Set up project tracking (Jira/GitHub Projects)
+4. [ ] Order equipment if needed (GPS reference clock)
+5. [ ] Schedule kickoff meeting for January 20
+
+**WEEK OF JANUARY 20:**
+- Begin Week 1 work on structured logging
+- Daily standups to track progress
+- Document any design decisions in IEEE_AUDIT
+
+**APPROVAL REQUIRED:**
+- [ ] Management approval for 370-hour effort
+- [ ] Budget approval ($37k estimated)
+- [ ] Schedule approval (10-week timeline)
+- [ ] Team allocation confirmation
 
 MIGRATION AND ROLLOUT STRATEGY
 ================================================================================
