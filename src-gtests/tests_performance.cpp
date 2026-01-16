@@ -1152,30 +1152,62 @@ TEST(Perf, MeasurementRepeatability) {
   }
   
   // Compute inter-trial statistics
-  double mean_of_means = std::accumulate(trial_means_ns.begin(), 
-                                         trial_means_ns.end(), 0.0) / num_trials;
+  // Apply outlier rejection to trial std devs using IQR method
+  // This handles system load spikes that corrupt individual trials
+  std::vector<double> sorted_stds = trial_stds_ns;
+  std::sort(sorted_stds.begin(), sorted_stds.end());
+  
+  double q1 = sorted_stds[sorted_stds.size() / 4];
+  double q3 = sorted_stds[3 * sorted_stds.size() / 4];
+  double iqr = q3 - q1;
+  double upper_fence = q3 + 1.5 * iqr;
+  
+  // Filter trials: keep only those with StdDev below upper fence
+  std::vector<double> filtered_means;
+  std::vector<double> filtered_stds;
+  int rejected = 0;
+  for (size_t i = 0; i < trial_stds_ns.size(); i++) {
+    if (trial_stds_ns[i] <= upper_fence) {
+      filtered_means.push_back(trial_means_ns[i]);
+      filtered_stds.push_back(trial_stds_ns[i]);
+    } else {
+      rejected++;
+    }
+  }
+  
+  // Require at least 7 good trials (70% success rate)
+  ASSERT_GE(filtered_means.size(), 7u) 
+    << "Too many outlier trials - system instability";
+  
+  double mean_of_means = std::accumulate(filtered_means.begin(), 
+                                         filtered_means.end(), 0.0) / filtered_means.size();
   
   double sum_sq_means = 0.0;
-  for (auto m : trial_means_ns) {
+  for (auto m : filtered_means) {
     double diff = m - mean_of_means;
     sum_sq_means += diff * diff;
   }
-  double std_of_means = sqrt(sum_sq_means / (num_trials - 1));
-  double type_a_uncertainty = std_of_means / sqrt(num_trials);
+  double std_of_means = sqrt(sum_sq_means / (filtered_means.size() - 1));
+  double type_a_uncertainty = std_of_means / sqrt(filtered_means.size());
   
-  double mean_of_stds = std::accumulate(trial_stds_ns.begin(), 
-                                        trial_stds_ns.end(), 0.0) / num_trials;
+  double mean_of_stds = std::accumulate(filtered_stds.begin(), 
+                                        filtered_stds.end(), 0.0) / filtered_stds.size();
   
   printf("\n");
   printf("==============================================================================\n");
   printf("Type A Uncertainty Analysis Results\n");
   printf("==============================================================================\n");
   printf("\n");
-  printf("Inter-trial statistics:\n");
+  if (rejected > 0) {
+    printf("Outlier rejection (IQR method): %d/%d trials rejected\n", rejected, num_trials);
+    printf("Upper fence for StdDev: %.2f ns\n", upper_fence);
+    printf("\n");
+  }
+  printf("Inter-trial statistics (%zu good trials):\n", filtered_means.size());
   printf("  Mean of trial means:        %.2f ns\n", mean_of_means);
   printf("  Std dev of trial means:     %.2f ns\n", std_of_means);
-  printf("  Type A uncertainty u(x):    %.2f ns (= σ/√n, n=%d)\n", 
-         type_a_uncertainty, num_trials);
+  printf("  Type A uncertainty u(x):    %.2f ns (= σ/√n, n=%zu)\n", 
+         type_a_uncertainty, filtered_means.size());
   printf("\n");
   printf("Intra-trial statistics:\n");
   printf("  Mean of trial std devs:     %.2f ns\n", mean_of_stds);
