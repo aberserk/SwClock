@@ -545,8 +545,17 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
             }
         }
 
-        /* Immediate step of REALTIME base; keep PI state & remaining_phase_ns intact */
+        /* Immediate step of REALTIME base */
         c->base_rt_ns += delta_ns;
+        
+        /* CRITICAL: Reset PI servo state after immediate step
+         * An immediate step changes the time base discontinuously, making any
+         * prior phase correction target obsolete. The servo must not continue
+         * trying to correct the old remaining_phase_ns value.
+         * However, we keep freq_scaled_ppm intact as it represents long-term drift.
+         */
+        c->remaining_phase_ns = 0;
+        c->pi_int_error_s = 0.0;
     }
 
     /* Optional pass-through of status flags */
