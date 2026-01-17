@@ -11,9 +11,24 @@
 #include <time.h>
 #include <math.h>
 #include <inttypes.h> // for PRId64
+#include <sys/time.h>
 
 #include "sw_clock.h"
 #include "swclock_jsonld.h"
+
+// Debug instrumentation (enable with -DSWCLOCK_DEBUG)
+#ifdef SWCLOCK_DEBUG
+#define DEBUG_LOG(fmt, ...) \
+    do { \
+        struct timespec _ts; \
+        clock_gettime(CLOCK_REALTIME, &_ts); \
+        fprintf(stderr, "[%ld.%06ld] SwClock[%p] " fmt "\n", \
+                _ts.tv_sec, _ts.tv_nsec / 1000, (void*)c, ##__VA_ARGS__); \
+        fflush(stderr); \
+    } while(0)
+#else
+#define DEBUG_LOG(fmt, ...) do {} while(0)
+#endif
 
 
 
@@ -46,6 +61,11 @@ struct SwClock {
 
     // Outstanding phase error to slew out (nanoseconds). Sign indicates direction.
     long long remaining_phase_ns;
+
+    // Watchdog state for detecting stuck servo
+    long long last_remaining_phase_ns;
+    int stuck_poll_count;
+    struct timespec last_poll_time;
 
     // Error tracking for maxerror/esterror computation
     double    max_observed_phase_error_s;    // maximum phase error seen (seconds)
@@ -103,27 +123,53 @@ static void swclock_rebase_now_and_update(SwClock* c) {
 
     int64_t elapsed_raw_ns = ts_to_ns(&now_raw) - ts_to_ns(&c->ref_mono_raw);
     if (elapsed_raw_ns < 0) elapsed_raw_ns = 0;
+    
+    // Guard against clock_gettime jitter: if elapsed time is tiny, skip phase bookkeeping
+    // to avoid numerical precision issues in the factor calculation.
+    // The time bases still advance, but we don't try to track phase corrections
+    // for sub-microsecond intervals where noise dominates signal.
+    const int64_t MIN_ELAPSED_FOR_CORRECTIONS_NS = 1000;  // 1 microsecond
+    bool skip_phase_bookkeeping = (elapsed_raw_ns < MIN_ELAPSED_FOR_CORRECTIONS_NS);
 
     double factor = total_factor(c);
     int64_t adj_elapsed_ns = (int64_t)((double)elapsed_raw_ns * factor);
+    
+    DEBUG_LOG("rebase: elapsed_raw=%lld ns, factor=%.9f, adj_elapsed=%lld ns",
+              (long long)elapsed_raw_ns, factor, (long long)adj_elapsed_ns);
+
+    // Sanity check: detect if factor calculation produced invalid results
+    if (factor < 0.999 || factor > 1.001) {
+        DEBUG_LOG("WARNING: total_factor out of bounds: %.9f (base_ppm=%.3f, pi_freq_ppm=%.3f)",
+                  factor, scaledppm_to_ppm(c->freq_scaled_ppm), c->pi_freq_ppm);
+    }
 
     // Update bases with total factor
     c->base_rt_ns   += adj_elapsed_ns;
     c->base_mono_ns += adj_elapsed_ns;
 
     // Bookkeeping: determine how much of that advancement was due to PI frequency
-    double    base_factor      = scaledppm_to_factor(c->freq_scaled_ppm);
-    double    delta_factor     = factor - base_factor;
-    long long applied_phase_ns = (long long)((double)elapsed_raw_ns * delta_factor);
+    // Skip this for very small elapsed times to avoid numerical precision issues
+    if (!skip_phase_bookkeeping) {
+        double    base_factor      = scaledppm_to_factor(c->freq_scaled_ppm);
+        double    delta_factor     = factor - base_factor;
+        long long applied_phase_ns = (long long)((double)elapsed_raw_ns * delta_factor);
+        
+        long long before_remaining = c->remaining_phase_ns;
 
-    // Reduce remaining phase by what PI rate has effectively corrected
-    if (c->remaining_phase_ns != 0) {
-        if (llabs(c->remaining_phase_ns) <= llabs(applied_phase_ns)) {
-            c->remaining_phase_ns = 0;
-        } else {
-            // Subtract the applied correction from remaining, regardless of sign
-            // The PI servo generates corrections opposite to the error, so this reduces the magnitude
-            c->remaining_phase_ns -= applied_phase_ns;
+        // Reduce remaining phase by what PI rate has effectively corrected
+        if (c->remaining_phase_ns != 0) {
+            if (llabs(c->remaining_phase_ns) <= llabs(applied_phase_ns)) {
+                c->remaining_phase_ns = 0;
+            } else {
+                // Subtract the applied correction from remaining, regardless of sign
+                // The PI servo generates corrections opposite to the error, so this reduces the magnitude
+                c->remaining_phase_ns -= applied_phase_ns;
+            }
+            
+            if (before_remaining != 0) {
+                DEBUG_LOG("rebase: remaining_phase: %lld -> %lld ns (applied_phase=%lld ns)",
+                          before_remaining, c->remaining_phase_ns, applied_phase_ns);
+            }
         }
     }
 
@@ -264,9 +310,16 @@ static void swclock_update_error_estimates(SwClock* c) {
 // Public poll: advance to now, then do one PI update based on elapsed dt.
 void swclock_poll(SwClock* c) {
     if (!c) return;
+    
+    struct timespec poll_start;
+    clock_gettime(CLOCK_REALTIME, &poll_start);
+    
     pthread_mutex_lock(&c->lock);
 
     struct timespec before = c->ref_mono_raw;
+    long long before_phase = c->remaining_phase_ns;
+    double before_pi_int = c->pi_int_error_s;
+    double before_pi_freq = c->pi_freq_ppm;
     
     swclock_rebase_now_and_update(c);
 
@@ -275,6 +328,30 @@ void swclock_poll(SwClock* c) {
 
     if (c->pi_servo_enabled) {
         swclock_pi_step(c, dt_s);
+    }
+    
+    // Watchdog: detect stuck servo
+    if (c->remaining_phase_ns != 0 && c->remaining_phase_ns == c->last_remaining_phase_ns) {
+        c->stuck_poll_count++;
+        if (c->stuck_poll_count > 20) {
+            DEBUG_LOG("WARNING: Servo stuck! remaining_phase_ns=%lld for %d polls, pi_int_error_s=%.9f, pi_freq_ppm=%.3f",
+                      c->remaining_phase_ns, c->stuck_poll_count, c->pi_int_error_s, c->pi_freq_ppm);
+        }
+    } else {
+        c->stuck_poll_count = 0;
+    }
+    c->last_remaining_phase_ns = c->remaining_phase_ns;
+    c->last_poll_time = poll_start;
+    
+    // Bounds checking
+    if (llabs(c->remaining_phase_ns) > 1000000000LL) {  // >1 second
+        DEBUG_LOG("WARNING: remaining_phase_ns out of bounds: %lld ns", c->remaining_phase_ns);
+    }
+    if (fabs(c->pi_int_error_s) > 1.0) {  // >1 second integral
+        DEBUG_LOG("WARNING: pi_int_error_s excessive: %.9f s", c->pi_int_error_s);
+    }
+    if (fabs(c->pi_freq_ppm) > (double)SWCLOCK_PI_MAX_PPM + 50.0) {
+        DEBUG_LOG("WARNING: pi_freq_ppm beyond clamp: %.3f ppm", c->pi_freq_ppm);
     }
 
     // Update error estimates based on current state
@@ -305,6 +382,11 @@ SwClock* swclock_create(void) {
     c->pi_int_error_s     = 0.0;
     c->pi_servo_enabled   = true;
     c->remaining_phase_ns = 0;
+    
+    // Initialize watchdog
+    c->last_remaining_phase_ns = 0;
+    c->stuck_poll_count = 0;
+    c->last_poll_time = c->ref_mono_raw;
 
     // Initialize error tracking
     c->max_observed_phase_error_s = 0.0;

@@ -11,3 +11,4 @@ __pycache__/
 *.tmp
 .DS_Store
 uncertainty_budget*.json
+test_failures/
