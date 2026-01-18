@@ -478,7 +478,7 @@ void swclock_destroy(SwClock* c) {
         }
     }
     
-    pthread_rwlock_destroy(&c->lock);
+    pthread_mutex_destroy(&c->lock);
     
     free(c);
 }

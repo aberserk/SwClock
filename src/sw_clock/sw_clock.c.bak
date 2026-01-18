@@ -176,9 +176,9 @@ static void swclock_rebase_now_and_update(SwClock* c) {
 void swclock_disable_pi_servo(SwClock* c)
 {
     if (!c) return;
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     c->pi_servo_enabled = false;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     // Log PI disable event
     swclock_log_event(c, SWCLOCK_EVENT_PI_DISABLE, NULL, 0);
@@ -186,9 +186,9 @@ void swclock_disable_pi_servo(SwClock* c)
 
 long long swclock_get_remaining_phase_ns(SwClock* c) {
     if (!c) return 0;
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     long long remaining = c->remaining_phase_ns;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     return remaining;
 }
 
@@ -354,7 +354,7 @@ void swclock_poll(SwClock* c) {
     // Update error estimates based on current state
     swclock_update_error_estimates(c);
 
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
 }
 
 // ================= Public API =================
@@ -451,9 +451,9 @@ void swclock_destroy(SwClock* c) {
 
     if (c->poll_thread_running) {
         // First, signal the thread to stop
-        pthread_rwlock_wrlock(&c->lock);
+        pthread_mutex_lock(&c->lock);
         c->stop_flag = true;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         
         // Wait for thread to exit
         pthread_join(c->poll_thread, NULL);
@@ -478,7 +478,7 @@ void swclock_destroy(SwClock* c) {
         }
     }
     
-    pthread_rwlock_destroy(&c->lock);
+    pthread_mutex_destroy(&c->lock);
     
     free(c);
 }
@@ -537,14 +537,14 @@ int swclock_settime(SwClock* c, clockid_t clk_id, const struct timespec *tp) {
     if (!c || !tp) { errno = EINVAL; return -1; }
     if (clk_id != CLOCK_REALTIME) { errno = EINVAL; return -1; }
 
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     swclock_rebase_now_and_update(c);
     c->base_rt_ns = (tp->tv_sec < 0) ? 0 : ts_to_ns(tp);
     // When the user sets time explicitly, clear leftover corrections
     c->remaining_phase_ns = 0;
     c->pi_int_error_s = 0.0;
     c->pi_freq_ppm = 0.0;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     return 0;
 }
 
@@ -560,7 +560,7 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
     };
     swclock_log_event(c, SWCLOCK_EVENT_ADJTIME_CALL, &adj_payload_entry, sizeof(adj_payload_entry));
 
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     swclock_rebase_now_and_update(c);
 
     unsigned int modes = tptr->modes;
@@ -674,7 +674,7 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
     tptr->tick      = c->tick;
     tptr->tai       = c->tai;
 
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     // Log adjtime return event
     swclock_event_adjtime_payload_t adj_payload_return = {
@@ -690,7 +690,7 @@ int swclock_adjtime(SwClock* c, struct timex *tptr) {
 
 void swclock_reset(SwClock* c) {
 
-    /* IMPORTANT: Not thread-safe use pthread_rwlock_wrlock(&c->lock); to call this function */
+    /* IMPORTANT: Not thread-safe use pthread_mutex_lock(&c->lock); to call this function */
     if (!c) return;
 
     clock_gettime(CLOCK_MONOTONIC_RAW, &c->ref_mono_raw);
@@ -731,9 +731,9 @@ static void* swclock_poll_thread_main(void* arg) {
         // Sleep first to avoid a busy loop
         nanosleep(&ts, NULL);
 
-        pthread_rwlock_wrlock(&c->lock);
+        pthread_mutex_lock(&c->lock);
         bool stop = c->stop_flag;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         if (stop) break;
 
         swclock_poll(c);
@@ -742,16 +742,16 @@ static void* swclock_poll_thread_main(void* arg) {
         // NOTE: This logging is for debugging/audit purposes and has minimal overhead
         // when disabled (flag checked once at swclock_create time)
         if (c->servo_log_enabled) {
-            pthread_rwlock_wrlock(&c->lock);
+            pthread_mutex_lock(&c->lock);
             if (c->log_fp && c->is_logging) {
                 swclock_log(c);  // ENABLED: Priority 1 Recommendation 5
             }
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
         }
         
         // JSON-LD ServoStateUpdate logging (independent of CSV logging)
         if (c->jsonld_logger && c->servo_log_enabled) {
-            pthread_rwlock_wrlock(&c->lock);
+            pthread_mutex_lock(&c->lock);
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
@@ -768,7 +768,7 @@ static void* swclock_poll_thread_main(void* arg) {
                 phase_error_ns, time_error_ns,
                 c->pi_freq_ppm, c->pi_int_error_s,
                 c->pi_servo_enabled);
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
         }
         
         // Real-time monitoring: Add TE sample to circular buffer (Rec 7)
@@ -805,11 +805,11 @@ void swclock_enable_PIServo(SwClock* c)
     if (!c) return;
 
     if (true != c->pi_servo_enabled) {
-        pthread_rwlock_wrlock(&c->lock);
+        pthread_mutex_lock(&c->lock);
         c->pi_servo_enabled = true;
         c->pi_int_error_s   = 0.0;
         c->pi_freq_ppm      = 0.0;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         
         // Log PI enable event
         swclock_log_event(c, SWCLOCK_EVENT_PI_ENABLE, NULL, 0);
@@ -822,11 +822,11 @@ void swclock_disable_PIServo(SwClock* c)
     if (!c) return;
 
     if (true == c->pi_servo_enabled) {
-        pthread_rwlock_wrlock(&c->lock);
+        pthread_mutex_lock(&c->lock);
         c->pi_servo_enabled = false;
         c->pi_int_error_s   = 0.0;
         c->pi_freq_ppm      = 0.0;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
     }
 }
 
@@ -836,9 +836,9 @@ bool swclock_is_PIServo_enabled(SwClock* c)
     if (!c) return false;
     bool is_enabled = true;
 
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     is_enabled = c->pi_servo_enabled;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     return is_enabled;
 }
@@ -849,12 +849,12 @@ bool swclock_is_PIServo_enabled(SwClock* c)
 void swclock_start_log(SwClock* c, const char* filename) {
     if (!c || !filename) return;
 
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
 
     c->log_fp = fopen(filename, "w");
     if (!c->log_fp) {
         perror("swclock_start_log: fopen");
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return;
     }
 
@@ -891,7 +891,7 @@ void swclock_start_log(SwClock* c, const char* filename) {
     fflush(c->log_fp);
     c->is_logging = true;
 
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     // Automatically start event logging if SWCLOCK_EVENT_LOG is set
     if (getenv("SWCLOCK_EVENT_LOG") != NULL) {
@@ -973,13 +973,13 @@ void swclock_log(SwClock* c) {
 
 void swclock_close_log(SwClock* c) {
     if (!c) return;
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     if (c->log_fp) {
         fclose(c->log_fp);
         c->log_fp = NULL;
     }
     c->is_logging = false;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
 }
 
 // ================= Event Logging (Priority 1 Recommendation 2) =================
@@ -996,18 +996,18 @@ static uint64_t swclock_get_timestamp_ns(void) {
 int swclock_start_event_log(SwClock* c, const char* filename) {
     if (!c || !filename) return -1;
     
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     // Already logging
     if (c->event_logging_enabled) {
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return -1;
     }
     
     // Open binary log file
     c->event_log_fp = fopen(filename, "wb");
     if (!c->event_log_fp) {
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return -1;
     }
     
@@ -1023,7 +1023,7 @@ int swclock_start_event_log(SwClock* c, const char* filename) {
     if (fwrite(&header, sizeof(header), 1, c->event_log_fp) != 1) {
         fclose(c->event_log_fp);
         c->event_log_fp = NULL;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return -1;
     }
     fflush(c->event_log_fp);
@@ -1041,11 +1041,11 @@ int swclock_start_event_log(SwClock* c, const char* filename) {
         c->event_logger_running = false;
         fclose(c->event_log_fp);
         c->event_log_fp = NULL;
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return -1;
     }
     
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     // Log start event
     swclock_log_event(c, SWCLOCK_EVENT_LOG_START, NULL, 0);
@@ -1056,25 +1056,25 @@ int swclock_start_event_log(SwClock* c, const char* filename) {
 void swclock_stop_event_log(SwClock* c) {
     if (!c) return;
     
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     if (!c->event_logging_enabled) {
-        pthread_rwlock_unlock(&c->lock);
+        pthread_mutex_unlock(&c->lock);
         return;
     }
     
     // Log stop event
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     swclock_log_event(c, SWCLOCK_EVENT_LOG_STOP, NULL, 0);
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     // Stop logger thread
     c->event_logger_running = false;
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     
     pthread_join(c->event_logger_thread, NULL);
     
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     // Close file
     if (c->event_log_fp) {
@@ -1084,7 +1084,7 @@ void swclock_stop_event_log(SwClock* c) {
     
     c->event_logging_enabled = false;
     
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
 }
 
 void swclock_log_event(SwClock* c, swclock_event_type_t event_type,
@@ -1123,12 +1123,12 @@ static void* swclock_event_logger_thread_main(void* arg) {
         if (swclock_ringbuf_pop(&c->event_ringbuf, event_buffer,
                                SWCLOCK_EVENT_MAX_SIZE, &event_size)) {
             // Write to file
-            pthread_rwlock_wrlock(&c->lock);
+            pthread_mutex_lock(&c->lock);
             if (c->event_log_fp) {
                 fwrite(event_buffer, 1, event_size, c->event_log_fp);
                 fflush(c->event_log_fp);
             }
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
         } else {
             // No events available, sleep briefly
             struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; // 1ms
@@ -1152,13 +1152,13 @@ int swclock_enable_monitoring(SwClock* c, bool enable) {
         return -1;
     }
     
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     if (enable && !c->monitoring_enabled) {
         // Allocate and initialize monitor
         c->monitor = malloc(sizeof(swclock_monitor_t));
         if (!c->monitor) {
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
             return -1;
         }
         
@@ -1166,7 +1166,7 @@ int swclock_enable_monitoring(SwClock* c, bool enable) {
         if (swclock_monitor_init(c->monitor, 100.0) != 0) {
             free(c->monitor);
             c->monitor = NULL;
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
             return -1;
         }
         
@@ -1175,7 +1175,7 @@ int swclock_enable_monitoring(SwClock* c, bool enable) {
             swclock_monitor_destroy(c->monitor);
             free(c->monitor);
             c->monitor = NULL;
-            pthread_rwlock_unlock(&c->lock);
+            pthread_mutex_unlock(&c->lock);
             return -1;
         }
         
@@ -1192,7 +1192,7 @@ int swclock_enable_monitoring(SwClock* c, bool enable) {
         c->monitoring_enabled = false;
     }
     
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
     return 0;
 }
 
@@ -1213,11 +1213,11 @@ int swclock_get_metrics(SwClock* c, swclock_metrics_snapshot_t* snapshot) {
 void swclock_set_thresholds(SwClock* c, const swclock_threshold_config_t* config) {
     if (!c || !config) return;
     
-    pthread_rwlock_wrlock(&c->lock);
+    pthread_mutex_lock(&c->lock);
     
     if (c->monitoring_enabled && c->monitor) {
         swclock_monitor_set_thresholds(c->monitor, config);
     }
     
-    pthread_rwlock_unlock(&c->lock);
+    pthread_mutex_unlock(&c->lock);
 }
