@@ -15,7 +15,7 @@ SwClock v2.0 includes enterprise-grade logging and validation infrastructure des
 - ✅ **Comprehensive audit trails** (UUID tracking, metadata, manifests)
 - ✅ **100% test stability** (Heisenbug eliminated Jan 2026)
 
-See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](COMMERCIAL_DEPLOYMENT_SUMMARY.md) for details.
+See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](docs/COMMERCIAL_DEPLOYMENT_SUMMARY.md) for details.
 
 ## Features
 
@@ -41,7 +41,7 @@ See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](COMMERCIAL_DEPLOYMENT_SUMMARY.md) for det
 Run the setup script to install dependencies:
 
 ```bash
-./setup.sh
+./scripts/setup.sh
 ```
 
 ## Manual Setup
@@ -282,7 +282,7 @@ SwClock CURRENT TIME:
 SWCLOCK_DISABLE_JSONLD=1 SWCLOCK_DISABLE_SERVO_LOG=1 ./build/ninja-gtests-macos/swclock_gtests
 
 # Custom log directory
-SWCLOCK_LOG_DIR=/tmp/swclock_logs ./performance.sh --quick
+SWCLOCK_LOG_DIR=/tmp/swclock_logs ./scripts/performance.sh --quick
 ```
 
 ## Commercial Logging & Validation
@@ -321,7 +321,7 @@ Validate logs without printf parsing:
 ✓ VALIDATION PASSED: All compliance targets met
 ```
 
-See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](COMMERCIAL_DEPLOYMENT_SUMMARY.md) for implementation details.
+See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](docs/COMMERCIAL_DEPLOYMENT_SUMMARY.md) for implementation details.
 
 ### Environment Variables
 

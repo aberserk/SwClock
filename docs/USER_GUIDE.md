@@ -16,10 +16,10 @@
 
 ### Your First Test Run
 
-After running `./setup.sh`, start with a quick validation:
+After running `./scripts/setup.sh`, start with a quick validation:
 
 ```bash
-./performance.sh --quick
+./scripts/performance.sh --quick
 ```
 
 **Expected duration:** ~70 seconds
@@ -182,7 +182,7 @@ P99 TE: 78.92 µs
 ```bash
 # Enable CSV logging to see time series
 export SWCLOCK_PERF_CSV=1
-./performance.sh --quick
+./scripts/performance.sh --quick
 
 # Plot the data
 python tools/read_performance_csv.py performance/*/raw_data/*.csv
@@ -214,8 +214,8 @@ MTIE Results (ITU-T G.8260 Class C):
 **Diagnosis:**
 ```bash
 # Check if it's a transient issue
-./performance.sh --quick
-./performance.sh --quick  # Run again - should be similar
+./scripts/performance.sh --quick
+./scripts/performance.sh --quick  # Run again - should be similar
 
 # Try longer test
 ./performance.sh --full

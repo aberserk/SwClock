@@ -356,7 +356,7 @@ EXPECT_NEAR(mean_te_ns, 0.0, 600.0);  // ±600 ns tolerance
 # Generate uncertainty budget with Type B uncertainties only
 python3 tools/uncertainty_analysis.py --type-b-only
 
-# Output: uncertainty_budget.json
+# Output: resources/uncertainty_budget.json
 ```
 
 ### 7.2 Full Analysis (Type A + Type B)
@@ -371,14 +371,14 @@ SWCLOCK_PERF_CSV=1 ./build/ninja-gtests-macos/swclock_gtests \
 # Step 2: Analyze with uncertainty tool
 python3 tools/uncertainty_analysis.py \
   logs/YYYYMMDD-HHMMSS-Perf_MeasurementRepeatability.csv \
-  --output uncertainty_budget_full.json
+  --output resources/uncertainty_budget_full.json
 
-# Output: uncertainty_budget_full.json with Type A + Type B
+# Output: resources/uncertainty_budget_full.json with Type A + Type B
 ```
 
 ### 7.3 Interpreting Results
 
-The `uncertainty_budget.json` file contains:
+The `resources/uncertainty_budget.json` file contains:
 
 ```json
 {

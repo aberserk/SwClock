@@ -95,7 +95,7 @@ def main():
     parser = argparse.ArgumentParser(description='Validate SwClock JSON-LD logs')
     parser.add_argument('log_file', help='JSONL log file to validate')
     parser.add_argument('--schema', 
-                       default='schemas/swclock-log-v1.0.0.json',
+                       default='resources/schemas/swclock-log-v1.0.0.json',
                        help='JSON Schema file')
     
     args = parser.parse_args()

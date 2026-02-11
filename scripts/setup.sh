@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Script directory and project root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+cd "$PROJECT_ROOT"
+
 echo "SwClock Build Environment Setup"
 echo "================================"
 

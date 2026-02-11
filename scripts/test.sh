@@ -21,9 +21,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Script directory
+# Script directory and project root
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+cd "$PROJECT_ROOT"
 
 # Default options
 REBUILD=false
@@ -101,7 +102,7 @@ echo ""
 # Build if necessary
 if [ "$BUILD_NEEDED" = true ]; then
     echo -e "${YELLOW}Building project...${NC}"
-    ./build.sh --clean
+    "${SCRIPT_DIR}/build.sh" --clean
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Build failed${NC}"
         exit 1

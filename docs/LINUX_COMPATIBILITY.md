@@ -246,7 +246,7 @@ Expected: All 6 core tests PASS
 
 #### 3. Run Performance Tests
 ```bash
-./performance.sh --quick
+./scripts/performance.sh --quick
 ```
 
 Expected: MTIE/TDEV within ITU-T G.8260 Class C limits

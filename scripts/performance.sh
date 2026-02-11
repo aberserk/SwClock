@@ -29,9 +29,10 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Script directory
+# Script directory and project root
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+cd "$PROJECT_ROOT"
 
 # Default options
 TEST_MODE="quick"
@@ -139,7 +140,7 @@ echo ""
 
 # Build the project if needed
 echo -e "${YELLOW}Building SwClock test suite...${NC}"
-./build.sh --clean
+"${SCRIPT_DIR}/build.sh" --clean
 if [ $? -ne 0 ]; then
     echo -e "${RED}✗ Build failed${NC}"
     exit 1

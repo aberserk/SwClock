@@ -20,7 +20,7 @@ Usage:
     python3 uncertainty_analysis.py <test_data.csv> [options]
     
 Example:
-    python3 uncertainty_analysis.py logs/repeatability_test.csv --output uncertainty_budget.json
+    python3 uncertainty_analysis.py logs/repeatability_test.csv --output resources/uncertainty_budget.json
 
 Author: SwClock Development Team
 Date: 2026-01-13
@@ -391,7 +391,7 @@ def main():
     parser.add_argument(
         "--output",
         "-o",
-        default="uncertainty_budget.json",
+        default="resources/uncertainty_budget.json",
         help="Output JSON file for uncertainty budget"
     )
     parser.add_argument(
