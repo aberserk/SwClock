@@ -352,6 +352,6 @@ int main() {
 ## Support
 
 For questions or issues:
-- Check `IEEE_AUDIT` file for compliance details
+- Check `docs/IEEE_AUDIT` file for compliance details
 - Review `tools/swclock_commercial_validator.py --help`
 - See `docs/USER_GUIDE.md` for additional documentation
