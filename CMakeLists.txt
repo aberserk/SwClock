@@ -30,6 +30,7 @@ set(SWCLOCK_SOURCES
     src/sw_clock/sw_clock_ringbuf.c
     src/sw_clock/sw_clock_monitor.c
     src/sw_clock/swclock_jsonld.c
+    src/sw_clock/sw_clock_commercial_log.c
 )
 
 set(SWCLOCK_HEADERS
@@ -39,6 +40,7 @@ set(SWCLOCK_HEADERS
     src/sw_clock/sw_clock_ringbuf.h
     src/sw_clock/sw_clock_monitor.h
     src/sw_clock/swclock_jsonld.h
+    src/sw_clock/sw_clock_commercial_log.h
 )
 
 

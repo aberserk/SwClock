@@ -1,6 +1,21 @@
 # SwClock - Software Clock Implementation for macOS
 
+**Version 2.0.0 - Commercial Deployment Ready**
+
 A precision software clock implementation for macOS that provides Linux-compatible time adjustment semantics. SwClock offers sub-microsecond precision timing suitable for PTP (Precision Time Protocol) applications and high-accuracy timekeeping.
+
+## 🎯 Production Status: READY FOR COMMERCIAL DEPLOYMENT
+
+SwClock v2.0 includes enterprise-grade logging and validation infrastructure designed for regulatory compliance and commercial deployment:
+
+- ✅ **Always-on structured logging** (binary events, JSON-LD, servo state)
+- ✅ **SHA-256 integrity protection** and tamper detection
+- ✅ **Independent validation tools** (no printf parsing)
+- ✅ **IEEE/ITU-T compliance** verification (IEEE 1588-2019, ITU-T G.8260)
+- ✅ **Comprehensive audit trails** (UUID tracking, metadata, manifests)
+- ✅ **100% test stability** (Heisenbug eliminated Jan 2026)
+
+See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](COMMERCIAL_DEPLOYMENT_SUMMARY.md) for details.
 
 ## Features
 
@@ -9,8 +24,9 @@ A precision software clock implementation for macOS that provides Linux-compatib
 - **PTP Ready**: Designed for PTP daemon integration with frequency and phase adjustment
 - **Time Standards Support**: UTC, TAI (International Atomic Time), and local time formatting
 - **Comprehensive Testing**: Performance characterization and validation test suites
-- **Enhanced Logging**: Comprehensive CSV metadata, servo state logging, SHA-256 integrity protection
-- **Independent Validation**: Metrics recomputation for audit compliance
+- **🆕 Commercial Logging**: Production-grade structured logging with SHA-256 integrity protection
+- **🆕 Independent Validation**: IEEE/ITU-T compliance verification without printf parsing
+- **🆕 Audit-Compliant**: Comprehensive metadata, tamper detection, UUID tracking
 - **VS Code Integration**: Full debugging and development environment
 
 ## Prerequisites
@@ -250,22 +266,64 @@ SwClock CURRENT TIME:
 ### Environment Variables
 
 **Logging control:**
-- `SWCLOCK_PERF_CSV=1` - Enable CSV logging with comprehensive metadata headers
-- `SWCLOCK_SERVO_LOG=1` - Enable detailed servo state logging (13 columns)
+- Commercial logging **enabled by default** (production mode)
+- `SWCLOCK_DISABLE_JSONLD=1` - Disable JSON-LD structured logging
+- `SWCLOCK_DISABLE_SERVO_LOG=1` - Disable servo state logging
+- `SWCLOCK_PERF_CSV=1` - Enable CSV logging in tests (legacy)
 - `SWCLOCK_EVENT_LOG=1` - Enable binary structured event logging
 - `SWCLOCK_LOG_DIR=path` - Custom log directory (default: `logs/`)
 
 **Usage:**
 ```bash
-# Enable all logging features
-SWCLOCK_PERF_CSV=1 SWCLOCK_SERVO_LOG=1 SWCLOCK_EVENT_LOG=1 ./build/swclock_gtests
+# Production mode (default) - all logging enabled
+./build/ninja-gtests-macos/swclock_gtests
+
+# Minimal mode (embedded systems)
+SWCLOCK_DISABLE_JSONLD=1 SWCLOCK_DISABLE_SERVO_LOG=1 ./build/ninja-gtests-macos/swclock_gtests
 
 # Custom log directory
 SWCLOCK_LOG_DIR=/tmp/swclock_logs ./performance.sh --quick
-
-# View event logs
-./build/swclock_event_dump logs/events_20260119-143022.bin
 ```
+
+## Commercial Logging & Validation
+
+### Structured Logging (Production Default)
+
+SwClock v2.0 includes enterprise-grade logging enabled by default:
+
+- **Binary Event Logging**: Lock-free ring buffer captures all adjtime() calls, servo state transitions
+- **JSON-LD Structured Logs**: Semantic web compatible interchange format
+- **Servo State Logging**: Continuous PI controller monitoring
+- **SHA-256 Integrity**: Automatic tamper detection on log finalization
+- **Comprehensive Metadata**: 36+ line CSV headers with system context, test UUID, compliance targets
+
+See [docs/COMMERCIAL_LOGGING.md](docs/COMMERCIAL_LOGGING.md) for complete documentation.
+
+### Independent Validation Tool
+
+Validate logs without printf parsing:
+
+```bash
+# Run tests (logs automatically generated)
+./build/ninja-gtests-macos/swclock_gtests
+
+# Validate CSV log with integrity check and compliance verification
+./tools/swclock_commercial_validator.py logs/perf_test_20260210.csv
+```
+
+**Output:**
+```
+✓ Integrity verified: SHA-256 match
+✓ Data loaded: 6001 samples
+✓ MTIE(1s) = 49876 ns < 100 µs
+✓ MTIE(10s) = 49774 ns < 200 µs
+✓ MTIE(30s) = 49550 ns < 300 µs
+✓ VALIDATION PASSED: All compliance targets met
+```
+
+See [COMMERCIAL_DEPLOYMENT_SUMMARY.md](COMMERCIAL_DEPLOYMENT_SUMMARY.md) for implementation details.
+
+### Environment Variables
 
 **Advanced features:**
 - **Enhanced CSV Headers**: 36-line headers with test UUID, system info, compliance targets

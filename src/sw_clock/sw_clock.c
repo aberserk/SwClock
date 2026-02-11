@@ -15,6 +15,7 @@
 
 #include "sw_clock.h"
 #include "swclock_jsonld.h"
+#include "sw_clock_commercial_log.h"
 
 // Debug instrumentation (enable with -DSWCLOCK_DEBUG)
 #ifdef SWCLOCK_DEBUG
@@ -314,9 +315,6 @@ void swclock_poll(SwClock* c) {
     pthread_rwlock_wrlock(&c->lock);
 
     struct timespec before = c->ref_mono_raw;
-    long long before_phase = c->remaining_phase_ns;
-    double before_pi_int = c->pi_int_error_s;
-    double before_pi_freq = c->pi_freq_ppm;
     
     swclock_rebase_now_and_update(c);
 
@@ -401,9 +399,10 @@ SwClock* swclock_create(void) {
     c->stop_flag           = false;
     c->poll_thread_running = true;
     
-    // Check if servo CSV logging should be enabled (Priority 1 Recommendation 5)
-    // This flag is checked once per instance at creation time for performance
-    c->servo_log_enabled = (getenv("SWCLOCK_SERVO_LOG") != NULL);
+    // COMMERCIAL DEPLOYMENT: Enable servo logging by default (no environment variable required)
+    // For production, comprehensive logging is always enabled unless explicitly disabled
+    const char* disable_servo_log = getenv("SWCLOCK_DISABLE_SERVO_LOG");
+    c->servo_log_enabled = (disable_servo_log == NULL || atoi(disable_servo_log) == 0);
     
     // Initialize event logging fields
     c->event_log_fp = NULL;
@@ -416,10 +415,12 @@ SwClock* swclock_create(void) {
     c->monitor = NULL;
     c->monitoring_enabled = false;
     
-    // Initialize JSON-LD structured logging (Rec 10)
+    // COMMERCIAL DEPLOYMENT: Enable JSON-LD structured logging by default
+    // This provides audit-compliant logging for regulatory environments
+    // Can be disabled with SWCLOCK_DISABLE_JSONLD=1 for embedded systems
     c->jsonld_logger = NULL;
-    const char* enable_jsonld = getenv("SWCLOCK_JSONLD");
-    if (enable_jsonld && atoi(enable_jsonld) == 1) {
+    const char* disable_jsonld = getenv("SWCLOCK_DISABLE_JSONLD");
+    if (disable_jsonld == NULL || atoi(disable_jsonld) == 0) {
         swclock_log_rotation_t rotation = {
             .enabled = true,
             .max_size_mb = 100,
@@ -434,7 +435,7 @@ SwClock* swclock_create(void) {
             clock_gettime(CLOCK_REALTIME, &ts);
             uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
             char details[256];
-            snprintf(details, sizeof(details), "{\"version\":\"%s\"}", SWCLOCK_VERSION);
+            snprintf(details, sizeof(details), "{\"version\":\"2.0.0\",\"build\":\"commercial\"}");
             swclock_jsonld_log_system(c->jsonld_logger, timestamp_ns, "swclock_start", details);
         }
     }

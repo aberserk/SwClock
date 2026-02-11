@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #include <time.h>
+#include <errno.h>
 #include <sys/time.h> // timeval
 #include "sw_clock_constants.h"
 
