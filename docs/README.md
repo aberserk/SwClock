@@ -118,9 +118,9 @@ See [STANDARDS_REFERENCE.md](STANDARDS_REFERENCE.md) for detailed requirements a
 ## Document Maintenance
 
 - **Created:** January 13, 2026
-- **Last Updated:** January 13, 2026
+- **Last Updated:** February 11, 2026
 - **Framework Version:** v1.0
-- **SwClock Version:** v2.0.0
+- **SwClock Version:** v2.1.0
 
 ---
 

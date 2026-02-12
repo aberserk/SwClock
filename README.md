@@ -1,6 +1,6 @@
 # SwClock - Software Clock Implementation for macOS
 
-**Version 2.0.0 - Commercial Deployment Ready**
+**Version 2.1.0 - Production Validated**
 
 A precision software clock implementation for macOS that provides Linux-compatible time adjustment semantics. SwClock offers sub-microsecond precision timing suitable for PTP (Precision Time Protocol) applications and high-accuracy timekeeping.
 
