@@ -997,8 +997,8 @@ TEST(Perf, ServoSlewPerformance) {
       clock_gettime(CLOCK_MONOTONIC_RAW, &raw_now);
       long long timestamp_ns = ts_to_ns(&raw_now) - t0_ns;
       
-      // Poll the servo (updates PI controller and applies corrections)
-      swclock_poll(clk);
+      // NOTE: swclock_poll() is called automatically by the poll thread every 10ms
+      // Manual polling is not needed and can cause lock contention with JSON-LD logging
       
       // Read remaining phase directly
       long long remaining = swclock_get_remaining_phase_ns(clk);
@@ -1123,8 +1123,8 @@ TEST(Perf, MeasurementRepeatability) {
       };
       nanosleep(&sleep_time, nullptr);
       
-      // Poll the servo
-      swclock_poll(clk);
+      // NOTE: swclock_poll() is called automatically by the poll thread every 10ms
+      // Manual polling is not needed
     }
     
     // Compute trial statistics

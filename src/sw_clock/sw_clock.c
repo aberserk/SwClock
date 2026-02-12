@@ -751,25 +751,47 @@ static void* swclock_poll_thread_main(void* arg) {
         }
         
         // JSON-LD ServoStateUpdate logging (independent of CSV logging)
+        // Read servo state inside lock, then log outside to avoid blocking
         if (c->jsonld_logger && c->servo_log_enabled) {
+            double freq_ppm_snapshot;
+            int64_t phase_error_ns_snapshot;
+            int64_t time_error_ns_snapshot;
+            double pi_freq_ppm_snapshot;
+            double pi_int_error_s_snapshot;
+            bool servo_enabled_snapshot;
+            uint64_t timestamp_ns;
+            
             pthread_rwlock_wrlock(&c->lock);
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
-            uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+            timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
             
-            // Calculate phase and time errors
-            int64_t phase_error_ns = c->remaining_phase_ns;
-            struct timespec sys_realtime, sw_realtime;
-            clock_gettime(CLOCK_REALTIME, &sys_realtime);
-            swclock_gettime(c, CLOCK_REALTIME, &sw_realtime);
-            int64_t time_error_ns = ts_to_ns(&sys_realtime) - ts_to_ns(&sw_realtime);
+            // Calculate phase and time errors  
+            phase_error_ns_snapshot = c->remaining_phase_ns;
             
-            swclock_jsonld_log_servo(c->jsonld_logger, timestamp_ns,
-                scaledppm_to_ppm(c->freq_scaled_ppm),
-                phase_error_ns, time_error_ns,
-                c->pi_freq_ppm, c->pi_int_error_s,
-                c->pi_servo_enabled);
+            // Calculate SwClock time directly (don't call swclock_gettime while holding lock)
+            struct timespec now_raw;
+            clock_gettime(CLOCK_MONOTONIC_RAW, &now_raw);
+            int64_t elapsed_raw_ns = ts_to_ns(&now_raw) - ts_to_ns(&c->ref_mono_raw);
+            if (elapsed_raw_ns < 0) elapsed_raw_ns = 0;
+            int64_t adj_elapsed_ns = (int64_t)((double)elapsed_raw_ns * c->cached_total_factor);
+            int64_t sw_time_ns = c->base_rt_ns + adj_elapsed_ns;
+            int64_t sys_time_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+            time_error_ns_snapshot = sys_time_ns - sw_time_ns;
+            
+            // Snapshot other servo state
+            freq_ppm_snapshot = scaledppm_to_ppm(c->freq_scaled_ppm);
+            pi_freq_ppm_snapshot = c->pi_freq_ppm;
+            pi_int_error_s_snapshot = c->pi_int_error_s;
+            servo_enabled_snapshot = c->pi_servo_enabled;
             pthread_rwlock_unlock(&c->lock);
+            
+            // Log outside the critical section to avoid blocking other threads
+            swclock_jsonld_log_servo(c->jsonld_logger, timestamp_ns,
+                freq_ppm_snapshot,
+                phase_error_ns_snapshot, time_error_ns_snapshot,
+                pi_freq_ppm_snapshot, pi_int_error_s_snapshot,
+                servo_enabled_snapshot);
         }
         
         // Real-time monitoring: Add TE sample to circular buffer (Rec 7)

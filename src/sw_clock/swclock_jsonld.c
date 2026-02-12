@@ -760,9 +760,8 @@ static int flush_buffer(swclock_jsonld_logger_t* logger)
     logger->current_size += logger->buffer_pos;
     logger->buffer_pos = 0;
 
-    /* Sync to disk */
+    /* Sync to OS buffers (fsync removed to avoid blocking while holding locks) */
     fflush(logger->fp);
-    fsync(fileno(logger->fp));
 
     return 0;
 }
