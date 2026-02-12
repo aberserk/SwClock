@@ -29,7 +29,7 @@ The SwClock performance validation framework provides comprehensive IEEE 1588-20
 
 #### Quick Validation (~70 seconds)
 ```bash
-./performance.sh --quick
+./scripts/performance.sh --quick
 ```
 
 Runs 3 essential tests:
@@ -39,7 +39,7 @@ Runs 3 essential tests:
 
 #### Full Validation (~60+ minutes)
 ```bash
-./performance.sh --full
+./scripts/performance.sh --full
 ```
 
 Includes all quick tests plus:
@@ -48,10 +48,10 @@ Includes all quick tests plus:
 #### Regression Testing
 ```bash
 # First run establishes baseline
-./performance.sh --quick
+./scripts/performance.sh --quick
 
 # Subsequent runs compare against baseline
-./performance.sh --regression --baseline=performance/performance_YYYYMMDD-HHMMSS
+./scripts/performance.sh --regression --baseline=performance/performance_YYYYMMDD-HHMMSS
 ```
 
 ---
@@ -174,8 +174,8 @@ pip install -r requirements.txt
 
 **Solution:**
 ```bash
-./setup.sh  # Re-run setup
-./build.sh --clean  # Clean rebuild
+./scripts/setup.sh  # Re-run setup
+./scripts/build.sh --clean  # Clean rebuild
 ```
 
 #### 3. Test Timeouts
@@ -308,7 +308,7 @@ Scripts return meaningful exit codes for automation:
 # Exit 0: All tests pass
 # Exit 1: Test failures or errors
 
-./test.sh
+./scripts/test.sh
 # Exit 0: All tests pass
 # Exit 1: Test failures
 

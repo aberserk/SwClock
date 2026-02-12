@@ -18,5 +18,9 @@
   "files.associations": {
     "*.h": "c",
     "*.c": "c"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "./build/ninja-gtests-macos/swclock_gtests": true,
+    "tee": true
   }
 }

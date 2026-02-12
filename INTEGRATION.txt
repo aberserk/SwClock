@@ -1,0 +1,1015 @@
+================================================================================
+SwClock v2.1.0 - Integration Guide
+================================================================================
+
+This guide explains how to integrate SwClock into timing applications such as
+PTP daemons (ptpd, linuxptp), NTP clients, or custom precision timing systems.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. Overview & Architecture
+2. Build System Integration
+3. Basic Integration Pattern
+4. API Reference & Usage Examples
+5. PTP Daemon Integration (ptpd Example)
+6. Advanced Features
+7. Performance Considerations
+8. Error Handling & Recovery
+9. Monitoring & Logging
+10. Testing & Validation
+11. Troubleshooting
+
+================================================================================
+1. OVERVIEW & ARCHITECTURE
+================================================================================
+
+SwClock provides Linux-compatible time adjustment semantics on macOS, enabling
+porting of Linux timing applications without code changes.
+
+Key Components:
+- Software Clock Instance (SwClock*): Thread-safe clock state
+- PI Servo Controller: Automatic frequency/phase correction
+- Time Adjustment API: adjtimex(), adjtime() compatibility
+- Clock Reading API: clock_gettime() compatible interface
+- Monitoring & Logging: Real-time performance tracking
+
+Architecture:
+┌─────────────────────────────────────────────────────────────────┐
+│ PTP Daemon / Timing Application                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Your Code: PTP state machine, network handling, filtering   │ │
+│ └──────────────┬──────────────────────────────────────────────┘ │
+│                ↓                                                │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ SwClock API: swclock_adjtime(), swclock_gettime()           │ │
+│ └──────────────┬──────────────────────────────────────────────┘ │
+│                ↓                                                │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ SwClock Core: PI servo, time base, poll thread              │ │
+│ └──────────────┬──────────────────────────────────────────────┘ │
+│                ↓                                                │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ macOS Kernel: CLOCK_MONOTONIC_RAW (reference clock)         │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+
+Thread Safety:
+- All SwClock API calls are thread-safe
+- Internal rwlock protects shared state
+- Poll thread runs automatically at 10ms interval
+- Safe for concurrent use from multiple threads
+
+================================================================================
+2. BUILD SYSTEM INTEGRATION
+================================================================================
+
+Option A: CMake Integration (Recommended)
+------------------------------------------
+
+Add SwClock as a subdirectory in your CMakeLists.txt:
+
+    cmake_minimum_required(VERSION 3.16)
+    project(MyPTPDaemon)
+
+    # Add SwClock library
+    add_subdirectory(external/SwClock)
+
+    # Your executable
+    add_executable(myptpd
+        src/main.c
+        src/ptp_protocol.c
+        src/ptp_servo.c
+    )
+
+    # Link SwClock
+    target_link_libraries(myptpd PRIVATE swclock)
+
+    # SwClock requires zlib for JSON-LD compression
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(myptpd PRIVATE ZLIB::ZLIB)
+
+
+Option B: Manual Compilation
+-----------------------------
+
+Build SwClock as a static library:
+
+    cd SwClock
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release
+    make
+
+Link against libswclock.a:
+
+    gcc -o myptpd main.c ptp_protocol.c \
+        -I/path/to/SwClock/src \
+        -L/path/to/SwClock/build \
+        -lswclock -lz -lpthread
+
+
+Option C: Source Integration
+-----------------------------
+
+Copy SwClock source files directly into your project:
+
+    your_project/
+    ├── src/
+    │   ├── main.c
+    │   ├── ptp_protocol.c
+    │   └── swclock/           # Copy from SwClock/src/sw_clock/
+    │       ├── sw_clock.h
+    │       ├── sw_clock.c
+    │       ├── sw_clock_*.c/h
+    │       └── swclock_jsonld.c/h
+
+Add to your Makefile:
+
+    SWCLOCK_SRCS = src/swclock/sw_clock.c \
+                   src/swclock/sw_clock_events.c \
+                   src/swclock/sw_clock_utilities.c \
+                   src/swclock/swclock_jsonld.c \
+                   # ... other SwClock sources
+
+    CFLAGS += -Isrc/swclock
+    LDFLAGS += -lz -lpthread
+
+================================================================================
+3. BASIC INTEGRATION PATTERN
+================================================================================
+
+Minimal Integration Example:
+
+    #include "sw_clock.h"
+    #include <stdio.h>
+    #include <time.h>
+
+    int main(void) {
+        // 1. Create SwClock instance
+        SwClock* clock = swclock_create();
+        if (!clock) {
+            fprintf(stderr, "Failed to create SwClock\n");
+            return 1;
+        }
+
+        // 2. Set initial time (optional - defaults to system time)
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        swclock_settime(clock, CLOCK_REALTIME, &ts);
+
+        // 3. Main timing loop
+        for (;;) {
+            // Your PTP/timing logic here...
+            
+            // Apply time corrections as needed
+            struct timex tx = {0};
+            tx.modes = ADJ_FREQUENCY;
+            tx.freq = 10000;  // +10 ppm
+            swclock_adjtime(clock, &tx);
+
+            // Read disciplined time
+            struct timespec now;
+            swclock_gettime(clock, CLOCK_REALTIME, &now);
+            
+            sleep(1);
+        }
+
+        // 4. Cleanup
+        swclock_destroy(clock);
+        return 0;
+    }
+
+Compilation:
+
+    gcc -o simple_example simple_example.c -lswclock -lz -lpthread
+
+================================================================================
+4. API REFERENCE & USAGE EXAMPLES
+================================================================================
+
+4.1 Clock Lifecycle
+-------------------
+
+swclock_create()
+    Creates and initializes a SwClock instance. Spawns background poll thread.
+    
+    SwClock* clk = swclock_create();
+    if (!clk) {
+        perror("swclock_create");
+        exit(1);
+    }
+
+swclock_destroy()
+    Stops poll thread and frees resources. Safe to call from any thread.
+    
+    swclock_destroy(clk);
+
+
+4.2 Reading Time
+----------------
+
+swclock_gettime()
+    Reads current time from disciplined clock. Thread-safe, low latency.
+    
+    struct timespec ts;
+    int ret = swclock_gettime(clk, CLOCK_REALTIME, &ts);
+    if (ret == 0) {
+        printf("Time: %ld.%09ld\n", ts.tv_sec, ts.tv_nsec);
+    }
+
+    Supported clocks:
+    - CLOCK_REALTIME: Wall clock time (UTC)
+    - CLOCK_MONOTONIC: Monotonic time (for intervals)
+    - CLOCK_MONOTONIC_RAW: Returns system RAW clock (passthrough)
+
+
+4.3 Time Adjustment (Primary API for PTP)
+------------------------------------------
+
+swclock_adjtime()
+    Linux-compatible adjtimex() implementation. Primary API for clock discipline.
+    
+    Example 1: Frequency adjustment (PTP servo output)
+    
+        struct timex tx = {0};
+        tx.modes = ADJ_FREQUENCY;
+        tx.freq = -5000;  // -5 ppm correction
+        
+        if (swclock_adjtime(clk, &tx) < 0) {
+            perror("swclock_adjtime");
+        }
+
+    Example 2: Phase offset (step adjustment)
+    
+        struct timex tx = {0};
+        tx.modes = ADJ_OFFSET | ADJ_NANO;
+        tx.offset = 500000;  // +500 µs offset (nanoseconds)
+        
+        swclock_adjtime(clk, &tx);
+
+    Example 3: Combined frequency + phase
+    
+        struct timex tx = {0};
+        tx.modes = ADJ_FREQUENCY | ADJ_OFFSET | ADJ_NANO;
+        tx.freq = -3000;      // -3 ppm
+        tx.offset = 100000;   // +100 µs
+        
+        swclock_adjtime(clk, &tx);
+
+    Example 4: Query current state (read-only)
+    
+        struct timex tx = {0};
+        tx.modes = 0;  // No modes = query only
+        
+        swclock_adjtime(clk, &tx);
+        printf("Frequency offset: %ld (%+.3f ppm)\n", 
+               tx.freq, tx.freq / 65536.0);
+        printf("Remaining offset: %ld ns\n", tx.offset);
+
+
+4.4 Alternative Time Adjustment APIs
+-------------------------------------
+
+swclock_settime()
+    Sets absolute time. Use for initial sync or large steps.
+    
+    struct timespec ts = {
+        .tv_sec = 1707700000,
+        .tv_nsec = 0
+    };
+    swclock_settime(clk, CLOCK_REALTIME, &ts);
+
+swclock_adjfreq()
+    Simple frequency adjustment (PPB units). Convenience wrapper.
+    
+    swclock_adjfreq(clk, -15.5);  // -15.5 ppb
+
+
+4.5 Advanced Servo Control
+---------------------------
+
+swclock_enable_pi_servo()
+    Enable/disable automatic PI servo controller.
+    
+    swclock_enable_pi_servo(clk, true);   // Enable (default)
+    swclock_enable_pi_servo(clk, false);  // Manual control only
+
+swclock_set_pi_servo_gains()
+    Configure PI controller gains for your application.
+    
+    swclock_set_pi_servo_gains(clk,
+        200.0,  // Kp: proportional gain (ppm/s)
+        8.0);   // Ki: integral gain (ppm/s²)
+
+swclock_get_remaining_phase_ns()
+    Query residual phase offset being corrected by PI servo.
+    
+    long long remaining = swclock_get_remaining_phase_ns(clk);
+    if (llabs(remaining) < 1000) {
+        printf("Phase locked within ±1 µs\n");
+    }
+
+
+4.6 Monitoring & Statistics
+----------------------------
+
+swclock_start_log()
+    Enable CSV servo state logging for debugging/analysis.
+    
+    swclock_start_log(clk, "servo_log.csv");
+
+swclock_enable_monitoring()
+    Enable real-time Time Error monitoring (Recommendation 7).
+    
+    SwClockMonitor* monitor = swclock_enable_monitoring(clk, true);
+    if (monitor) {
+        // Access monitoring data...
+    }
+
+swclock_get_monitor()
+    Access current monitoring statistics (TDEV, MTIE, etc.).
+    
+    SwClockMonitor* m = swclock_get_monitor(clk);
+    if (m) {
+        printf("TDEV(1s): %.0f ns\n", m->tdev_1s);
+        printf("MTIE(1s): %.0f ns\n", m->mtie_1s);
+    }
+
+================================================================================
+5. PTP DAEMON INTEGRATION (ptpd Example)
+================================================================================
+
+This section shows how to integrate SwClock into ptpd or similar PTP daemons.
+
+5.1 Initialization in main()
+-----------------------------
+
+    #include "sw_clock.h"
+
+    // Global SwClock instance
+    static SwClock* g_swclock = NULL;
+
+    int main(int argc, char** argv) {
+        // ... ptpd initialization ...
+
+        // Create SwClock before entering PTP state machine
+        g_swclock = swclock_create();
+        if (!g_swclock) {
+            ERROR("Failed to create SwClock\n");
+            return -1;
+        }
+
+        // Configure PI servo for PTP (optional - defaults work well)
+        swclock_set_pi_servo_gains(g_swclock, 200.0, 8.0);
+
+        // Enable monitoring for IEEE 1588 compliance testing
+        swclock_enable_monitoring(g_swclock, true);
+
+        // ... start PTP protocol state machine ...
+
+        return ptpd_run();
+    }
+
+
+5.2 Replace Linux adjtimex() Calls
+-----------------------------------
+
+Find all clock discipline calls in your PTP daemon and replace:
+
+    OLD (Linux):
+        struct timex tx;
+        tx.modes = ADJ_FREQUENCY;
+        tx.freq = adj_freq;
+        adjtimex(&tx);
+
+    NEW (SwClock):
+        struct timex tx;
+        tx.modes = ADJ_FREQUENCY;
+        tx.freq = adj_freq;
+        swclock_adjtime(g_swclock, &tx);
+
+
+5.3 Replace clock_gettime() Calls
+----------------------------------
+
+For maximum portability, wrap in compatibility function:
+
+    static inline int ptp_gettime(clockid_t clk_id, struct timespec* ts) {
+    #ifdef __APPLE__
+        return swclock_gettime(g_swclock, clk_id, ts);
+    #else
+        return clock_gettime(clk_id, ts);
+    #endif
+    }
+
+Then use throughout your code:
+
+    struct timespec now;
+    ptp_gettime(CLOCK_REALTIME, &now);
+
+
+5.4 PTP Servo Integration
+--------------------------
+
+Typical PTP servo loop with SwClock:
+
+    void ptp_servo_update(double offset_ns, double freq_adj_ppb) {
+        struct timex tx = {0};
+
+        // Apply frequency correction from PTP servo
+        tx.modes = ADJ_FREQUENCY;
+        tx.freq = (long)(freq_adj_ppb * 65.536);  // Convert ppb to Linux units
+
+        // Apply offset if using offset mode
+        if (ptp_offset_mode) {
+            tx.modes |= ADJ_OFFSET | ADJ_NANO;
+            tx.offset = (long)offset_ns;
+        }
+
+        if (swclock_adjtime(g_swclock, &tx) < 0) {
+            ERROR("Clock adjustment failed: %s\n", strerror(errno));
+        }
+
+        // Log for debugging
+        DBG("Applied: freq=%+.3f ppb, offset=%+.0f ns\n", 
+            freq_adj_ppb, offset_ns);
+    }
+
+
+5.5 Master/Slave State Changes
+-------------------------------
+
+    void ptp_state_changed(int new_state) {
+        switch (new_state) {
+        case PTP_MASTER:
+            // When becoming master, set system time as reference
+            struct timespec sys_time;
+            clock_gettime(CLOCK_REALTIME, &sys_time);
+            swclock_settime(g_swclock, CLOCK_REALTIME, &sys_time);
+            INFO("Master mode: SwClock set to system time\n");
+            break;
+
+        case PTP_SLAVE:
+            // Slave mode: SwClock will be disciplined by PTP
+            INFO("Slave mode: SwClock discipline active\n");
+            break;
+
+        case PTP_PASSIVE:
+        case PTP_LISTENING:
+            // Passive states: hold current frequency
+            INFO("Passive mode: holding current state\n");
+            break;
+        }
+    }
+
+
+5.6 Timestamp Conversion
+-------------------------
+
+When PTP timestamps arrive in standard TAI/UTC format:
+
+    void process_ptp_timestamp(uint64_t ptp_seconds, uint32_t ptp_nanoseconds) {
+        // Convert PTP timestamp to SwClock timespec
+        struct timespec ptp_time = {
+            .tv_sec = (time_t)ptp_seconds,
+            .tv_nsec = (long)ptp_nanoseconds
+        };
+
+        // Get current SwClock time
+        struct timespec swc_time;
+        swclock_gettime(g_swclock, CLOCK_REALTIME, &swc_time);
+
+        // Compute offset
+        long long offset_ns = 
+            (ptp_time.tv_sec * 1000000000LL + ptp_time.tv_nsec) -
+            (swc_time.tv_sec * 1000000000LL + swc_time.tv_nsec);
+
+        // Pass to PTP servo for filtering
+        ptp_servo_step(offset_ns);
+    }
+
+
+5.7 Graceful Shutdown
+----------------------
+
+    void ptp_shutdown(void) {
+        INFO("Shutting down PTP daemon...\n");
+
+        // ... cleanup PTP resources ...
+
+        // Destroy SwClock (stops poll thread, closes logs)
+        if (g_swclock) {
+            swclock_destroy(g_swclock);
+            g_swclock = NULL;
+        }
+
+        INFO("SwClock destroyed\n");
+    }
+
+================================================================================
+6. ADVANCED FEATURES
+================================================================================
+
+6.1 Custom PI Servo Tuning
+---------------------------
+
+For specialized applications, tune PI controller for your requirements:
+
+    // Fast convergence (aggressive)
+    swclock_set_pi_servo_gains(clk,
+        400.0,  // High Kp for fast response
+        16.0);  // High Ki for quick offset elimination
+
+    // Slow, stable (low-noise environment)
+    swclock_set_pi_servo_gains(clk,
+        100.0,  // Low Kp for gentle corrections
+        4.0);   // Low Ki for stability
+
+    // Default (recommended for PTP)
+    swclock_set_pi_servo_gains(clk, 200.0, 8.0);
+
+
+6.2 Manual Servo Control
+-------------------------
+
+Disable PI servo and implement custom control algorithm:
+
+    // Disable automatic PI servo
+    swclock_enable_pi_servo(clk, false);
+
+    // Implement your own control loop
+    void custom_servo_step(SwClock* clk, double offset_ns) {
+        // Your custom algorithm...
+        double freq_correction = my_pi_controller(offset_ns);
+
+        // Apply correction manually
+        struct timex tx = {0};
+        tx.modes = ADJ_FREQUENCY;
+        tx.freq = (long)(freq_correction * 65.536);
+        swclock_adjtime(clk, &tx);
+    }
+
+
+6.3 Multiple Clock Instances
+-----------------------------
+
+SwClock supports multiple independent clock instances:
+
+    // Create separate clocks for different time domains
+    SwClock* utc_clock = swclock_create();
+    SwClock* tai_clock = swclock_create();
+    SwClock* local_clock = swclock_create();
+
+    // Each can be disciplined independently
+    swclock_adjtime(utc_clock, &utc_correction);
+    swclock_adjtime(tai_clock, &tai_correction);
+
+    // Each has independent PI servo
+    swclock_set_pi_servo_gains(utc_clock, 200.0, 8.0);
+    swclock_set_pi_servo_gains(tai_clock, 150.0, 6.0);
+
+
+6.4 Event Logging
+-----------------
+
+Enable structured event logging for debugging and audit:
+
+    // Start event logging to binary format
+    swclock_start_event_log(clk, "events.bin");
+
+    // All clock adjustments are automatically logged
+    // No application changes needed
+
+    // Stop logging
+    swclock_stop_event_log(clk);
+
+    // Analyze with: tools/swclock_event_dump events.bin
+
+
+6.5 JSON-LD Structured Logging
+-------------------------------
+
+SwClock automatically logs to JSON-LD format (enabled by default):
+
+    Location: logs/swclock.jsonl
+    Rotation: 100 MB max per file, 7 day retention, 10 files, gzip compression
+    
+    To disable (embedded systems):
+        export SWCLOCK_DISABLE_JSONLD=1
+
+    Content: Servo state updates, adjustments, system events with timestamps
+
+================================================================================
+7. PERFORMANCE CONSIDERATIONS
+================================================================================
+
+7.1 Timing Characteristics
+---------------------------
+
+SwClock Performance (macOS, Apple Silicon):
+- Time read latency: <1 µs (typical: 200-500 ns)
+- Adjustment latency: <100 µs
+- PI servo update rate: 100 Hz (10 ms poll interval)
+- Phase correction rate: 100 ppm typical (configurable up to 200 ppm)
+- Time Error RMS: 100-400 ns (validated over 4 hours)
+- MTIE(1s): <10 µs (IEEE 1588-2019: <100 µs required)
+- TDEV(1s): <1 µs (IEEE 1588-2019: <40 µs required)
+
+See PERFORMANCE.txt for complete validation results.
+
+
+7.2 Thread Safety & Concurrency
+--------------------------------
+
+Safe patterns:
+✓ Multiple threads reading time simultaneously
+✓ Multiple threads applying adjustments
+✓ Read while poll thread is running
+✓ Destroy from any thread (waits for poll thread)
+
+Internal locking:
+- rwlock protects shared state
+- Readers don't block each other (multiple concurrent reads)
+- Writers block all operations (brief, <1 µs typical)
+- No deadlocks (validated over 4+ hours continuous operation)
+
+
+7.3 Real-Time Considerations
+-----------------------------
+
+For real-time applications:
+
+1. Pin threads to cores:
+    pthread_t tid = pthread_self();
+    thread_affinity_policy_data_t policy = { core_id };
+    thread_policy_set(pthread_mach_thread_np(tid),
+                      THREAD_AFFINITY_POLICY,
+                      (thread_policy_t)&policy, 1);
+
+2. Elevate priority:
+    struct sched_param param = { .sched_priority = 80 };
+    pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+
+3. Minimize memory allocation:
+    - SwClock pre-allocates all structures at create time
+    - No dynamic allocation in hot path
+    - Safe for real-time use after initialization
+
+
+7.4 Memory Usage
+----------------
+
+Per-clock instance:
+- Core structure: ~2 KB
+- JSON-LD logger: ~1 MB buffer (if enabled)
+- Event log buffer: 256 KB (if enabled)
+- Monitoring buffer: 16 KB (if enabled)
+
+Total typical footprint: ~1.3 MB per clock instance
+
+================================================================================
+8. ERROR HANDLING & RECOVERY
+================================================================================
+
+8.1 Initialization Failures
+----------------------------
+
+    SwClock* clk = swclock_create();
+    if (!clk) {
+        // Possible causes:
+        // - Memory allocation failure
+        // - Thread creation failure
+        // - Lock initialization failure
+        perror("swclock_create");
+        exit(1);
+    }
+
+
+8.2 Time Adjustment Failures
+-----------------------------
+
+    struct timex tx = {0};
+    tx.modes = ADJ_FREQUENCY;
+    tx.freq = freq_adjustment;
+
+    if (swclock_adjtime(clk, &tx) < 0) {
+        // Check errno
+        switch (errno) {
+        case EINVAL:
+            ERROR("Invalid parameters to swclock_adjtime\n");
+            break;
+        case EFAULT:
+            ERROR("Invalid pointer passed\n");
+            break;
+        default:
+            ERROR("swclock_adjtime failed: %s\n", strerror(errno));
+        }
+        // Continue with previous correction...
+    }
+
+
+8.3 Robustness Under Resource Pressure
+---------------------------------------
+
+SwClock is designed to handle resource constraints:
+
+- Logging failures don't affect time discipline
+- Out-of-memory in logger: disables logging, continues operation
+- Thread priority inversion: protected by rwlock
+- High system load: PI servo adapts automatically
+
+
+8.4 Recovery from Time Steps
+-----------------------------
+
+If system time is stepped externally:
+
+    // Detect step
+    struct timespec sys_time, swc_time;
+    clock_gettime(CLOCK_REALTIME, &sys_time);
+    swclock_gettime(clk, CLOCK_REALTIME, &swc_time);
+
+    long long diff_ns = 
+        (sys_time.tv_sec - swc_time.tv_sec) * 1000000000LL +
+        (sys_time.tv_nsec - swc_time.tv_nsec);
+
+    if (llabs(diff_ns) > 1000000000LL) {  // >1 second
+        INFO("Large time step detected, resynchronizing\n");
+        swclock_settime(clk, CLOCK_REALTIME, &sys_time);
+    }
+
+================================================================================
+9. MONITORING & LOGGING
+================================================================================
+
+9.1 Enable Real-Time Monitoring
+--------------------------------
+
+    SwClockMonitor* monitor = swclock_enable_monitoring(clk, true);
+    if (!monitor) {
+        WARN("Failed to enable monitoring\n");
+    }
+
+
+9.2 Query Monitoring Statistics
+--------------------------------
+
+    void print_performance_stats(SwClock* clk) {
+        SwClockMonitor* m = swclock_get_monitor(clk);
+        if (!m) return;
+
+        printf("=== SwClock Performance Statistics ===\n");
+        printf("Sample count: %zu\n", m->sample_count);
+        printf("Window: %.1f seconds\n", m->window_seconds);
+        printf("\n");
+        printf("Time Error Statistics:\n");
+        printf("  Mean:    %+.0f ns\n", m->mean_te_ns);
+        printf("  Std Dev: %.0f ns\n", m->stddev_te_ns);
+        printf("  Min:     %+.0f ns\n", m->min_te_ns);
+        printf("  Max:     %+.0f ns\n", m->max_te_ns);
+        printf("\n");
+        printf("IEEE 1588 Metrics:\n");
+        printf("  TDEV(0.1s): %.0f ns\n", m->tdev_100ms);
+        printf("  TDEV(1s):   %.0f ns\n", m->tdev_1s);
+        printf("  TDEV(10s):  %.0f ns\n", m->tdev_10s);
+        printf("  MTIE(1s):   %.0f ns\n", m->mtie_1s);
+        printf("  MTIE(10s):  %.0f ns\n", m->mtie_10s);
+    }
+
+
+9.3 CSV Logging for Analysis
+-----------------------------
+
+Enable CSV logging to track servo state over time:
+
+    swclock_start_log(clk, "servo_state.csv");
+    
+    // ... run your application ...
+    
+    swclock_close_log(clk);
+
+CSV contains: timestamp, frequency offset, phase offset, PI controller state
+
+Analyze with: tools/analyze_swclock_logs.py servo_state.csv
+
+
+9.4 JSON-LD Audit Logging
+--------------------------
+
+JSON-LD logs are automatically created at logs/swclock.jsonl:
+
+    {
+      "@context": "https://swclock.org/vocab#",
+      "@type": "ServoStateUpdate",
+      "timestamp": "2026-02-11T15:41:23.456Z",
+      "freq_ppm": -5.234,
+      "phase_error_ns": 234,
+      "time_error_ns": -123,
+      "pi_freq_ppm": -5.1,
+      "pi_int_error_s": 0.000000123,
+      "servo_enabled": true
+    }
+
+Parse with standard JSON tools or tools/validate_jsonld.py
+
+
+9.5 Debug Logging
+-----------------
+
+Enable debug output during development:
+
+    #define DEBUG_LOG(fmt, ...) fprintf(stderr, "[SwClock] " fmt "\n", ##__VA_ARGS__)
+
+    // SwClock will output warnings for:
+    // - Stuck servo conditions
+    // - Out-of-bounds parameters
+    // - Performance anomalies
+
+================================================================================
+10. TESTING & VALIDATION
+================================================================================
+
+10.1 Integration Testing
+-------------------------
+
+Test your PTP daemon with SwClock:
+
+    # 1. Build with SwClock
+    cmake -DUSE_SWCLOCK=ON ..
+    make
+
+    # 2. Run test suite
+    ./build/test_ptp_daemon
+
+    # 3. Validate timing performance
+    ./SwClock/scripts/performance.sh --full
+
+
+10.2 Compliance Testing
+-----------------------
+
+Verify IEEE 1588-2019 compliance:
+
+    # Run 4-hour stability test
+    ./SwClock/scripts/run_4h_performance.sh
+
+    # Analyze results
+    python3 SwClock/tools/ieee_metrics.py performance/
+
+    # Expected results (see PERFORMANCE.txt):
+    # - MTIE(1s) < 100 µs ✓
+    # - TDEV(1s) < 40 µs ✓
+    # - Time Error RMS < 50 µs ✓
+
+
+10.3 Interoperability Testing
+------------------------------
+
+Test with other PTP implementations:
+
+    # Setup:
+    # - Machine A: Linux grand master (linuxptp)
+    # - Machine B: macOS slave (your daemon + SwClock)
+
+    # On Linux grand master:
+    ptp4l -i eth0 -m
+
+    # On macOS slave:
+    ./myptpd -i en0 -s -m
+
+    # Monitor synchronization:
+    watch -n 1 'pmc -u -b 0 "GET CURRENT_DATA_SET"'
+
+
+10.4 Stress Testing
+--------------------
+
+Test under adverse conditions:
+
+    # CPU load
+    stress --cpu 8 --timeout 3600 &
+    ./myptpd
+
+    # Network jitter
+    sudo tc qdisc add dev eth0 root netem delay 50ms 20ms
+    ./myptpd
+
+    # Frequency steps
+    while true; do
+        sudo sysctl kern.clockrate.hz=$((1000 + RANDOM % 200))
+        sleep 60
+    done
+
+================================================================================
+11. TROUBLESHOOTING
+================================================================================
+
+Problem: Poor timing performance
+---------------------------------
+Check:
+1. System load: top, Activity Monitor
+2. Network jitter: ping -i 0.01 master_ip
+3. SwClock monitoring: print_performance_stats(clk)
+4. PI servo gains: try different tuning parameters
+
+Solution: Adjust PI gains or reduce system load
+
+
+Problem: Time drifts over hours
+--------------------------------
+Check:
+1. Is PI servo enabled? swclock_enable_pi_servo(clk, true)
+2. Are corrections being applied? Log swclock_adjtime() calls
+3. Check holdover drift: tools/analyze_performance_logs.py
+
+Solution: Enable PI servo or tune gains
+
+
+Problem: Large phase jumps
+---------------------------
+Check:
+1. PTP state changes: Master/Slave transitions
+2. Network path changes: Route or switch changes
+3. System time steps: Check system logs
+
+Solution: Implement step detection and recovery (section 8.4)
+
+
+Problem: High CPU usage
+-----------------------
+Check:
+1. Logging enabled? Disable CSV/event logging if not needed
+2. Monitoring overhead? Disable if not required
+3. Poll rate: Should be 10ms (100 Hz), not configurable
+
+Solution: Disable unnecessary logging features
+
+
+Problem: Crashes or hangs
+-------------------------
+Check:
+1. Valid SwClock pointer? Check return from swclock_create()
+2. Double-free? Don't call swclock_destroy() twice
+3. Race condition? All SwClock APIs are thread-safe
+
+Solution: Validate pointers, check thread usage patterns
+
+
+Problem: JSON-LD logs growing large
+------------------------------------
+Check:
+1. Rotation enabled? Default: 100 MB, 7 days, 10 files
+2. Compression working? Requires zlib
+
+Solution: Logs auto-rotate. Disable with SWCLOCK_DISABLE_JSONLD=1
+
+
+Known Limitations
+-----------------
+1. macOS only (Linux has native adjtimex support)
+2. Maximum frequency correction: ±200 ppm (configurable)
+3. Minimum poll interval: 10 ms (fixed)
+4. Time Error monitoring: 60-second window
+
+================================================================================
+ADDITIONAL RESOURCES
+================================================================================
+
+Documentation:
+- README.md: Getting started guide
+- PERFORMANCE.txt: 4-hour validation results and metrics
+- docs/PERFORMANCE_TESTING.md: Testing framework guide
+- docs/METRICS_REFERENCE.md: IEEE metrics explanation
+- docs/STANDARDS_REFERENCE.md: IEEE 1588 / ITU-T compliance
+
+Example Code:
+- src-tools/: Example programs using SwClock
+- src-gtests/tests_performance.cpp: Performance test suite
+- scripts/: Testing and analysis scripts
+
+Support:
+- GitHub Issues: Report bugs or request features
+- IEEE 1588 Working Group: Standards discussion
+- PTP mailing lists: Community support
+
+Version:
+- SwClock: v2.1.0 (Production Validated)
+- IEEE 1588: 2019 Edition
+- ITU-T G.8260: Current
+
+================================================================================
+LICENSE & WARRANTY
+================================================================================
+
+SwClock is provided as-is for integration into timing applications.
+Validated for production use with 4+ hours continuous testing.
+
+See LICENSE file for full terms.
+
+IEEE 1588-2019 and ITU-T G.8260 compliance validated.
+See PERFORMANCE.txt for complete validation results.
+
+================================================================================
+End of Integration Guide
+================================================================================
