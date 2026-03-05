@@ -341,14 +341,19 @@ static void check_thresholds(
 static void* compute_thread_main(void* arg) {
     swclock_monitor_t* monitor = (swclock_monitor_t*)arg;
     
-    struct timespec sleep_time = {
-        .tv_sec = SWCLOCK_MONITOR_COMPUTE_INTERVAL_S,
-        .tv_nsec = 0
-    };
-    
+    /* Sleep in 100ms slices so stop_compute_thread is checked frequently.
+     * The original single nanosleep({.tv_sec=10}) blocked pthread_join for
+     * up to 10 s on destruction.  With slices, max shutdown latency is 100ms. */
+    const struct timespec slice = { 0, 100000000L }; /* 100 ms */
+    const int slices_per_interval =
+        (SWCLOCK_MONITOR_COMPUTE_INTERVAL_S * 1000) / 100; /* intervals→slices */
+
     while (!monitor->stop_compute_thread) {
-        nanosleep(&sleep_time, NULL);
-        
+        for (int s = 0; s < slices_per_interval; s++) {
+            if (monitor->stop_compute_thread) break;
+            nanosleep(&slice, NULL);
+        }
+
         if (monitor->stop_compute_thread) break;
         
         // Compute metrics
