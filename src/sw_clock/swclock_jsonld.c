@@ -23,6 +23,34 @@
 #include <pthread.h>
 #include <errno.h>
 #include <zlib.h>
+#include <stdarg.h>
+#include <syslog.h>
+
+static void swclock_jsonld_log(int priority, const char *format, ...) {
+    char message[1024];
+    va_list ap;
+    FILE *sink = NULL;
+
+    (void)priority;
+
+    va_start(ap, format);
+    vsnprintf(message, sizeof(message), format, ap);
+    va_end(ap);
+
+    sink = fopen("logs/swclock_internal.log", "a");
+    if (!sink) {
+        sink = fopen("/tmp/swclock_internal.log", "a");
+    }
+    if (!sink) {
+        return;
+    }
+
+    fprintf(sink, "[swclock_jsonld] %s\n", message);
+    fclose(sink);
+}
+
+#define SWCLOCK_JSONLD_ERROR(fmt, ...)                                         \
+    swclock_jsonld_log(LOG_ERR, fmt, ##__VA_ARGS__)
 
 /* Internal logger context */
 struct swclock_jsonld_logger {
@@ -59,13 +87,13 @@ swclock_jsonld_logger_t* swclock_jsonld_init(
     const swclock_system_context_t* system_ctx)
 {
     if (!log_path) {
-        fprintf(stderr, "swclock_jsonld_init: log_path is NULL\n");
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: log_path is NULL");
         return NULL;
     }
 
     swclock_jsonld_logger_t* logger = calloc(1, sizeof(swclock_jsonld_logger_t));
     if (!logger) {
-        fprintf(stderr, "swclock_jsonld_init: Failed to allocate logger\n");
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: Failed to allocate logger");
         return NULL;
     }
 
@@ -88,7 +116,7 @@ swclock_jsonld_logger_t* swclock_jsonld_init(
         logger->system = *system_ctx;
     } else {
         if (detect_system_context(&logger->system) != 0) {
-            fprintf(stderr, "swclock_jsonld_init: Failed to detect system context\n");
+            SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: Failed to detect system context");
             free(logger);
             return NULL;
         }
@@ -98,7 +126,7 @@ swclock_jsonld_logger_t* swclock_jsonld_init(
     logger->buffer_size = SWCLOCK_JSONLD_BUFFER_SIZE;
     logger->buffer = malloc(logger->buffer_size);
     if (!logger->buffer) {
-        fprintf(stderr, "swclock_jsonld_init: Failed to allocate buffer\n");
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: Failed to allocate buffer");
         free(logger);
         return NULL;
     }
@@ -106,7 +134,7 @@ swclock_jsonld_logger_t* swclock_jsonld_init(
 
     /* Initialize mutex */
     if (pthread_mutex_init(&logger->lock, NULL) != 0) {
-        fprintf(stderr, "swclock_jsonld_init: Failed to initialize mutex\n");
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: Failed to initialize mutex");
         free(logger->buffer);
         free(logger);
         return NULL;
@@ -115,8 +143,8 @@ swclock_jsonld_logger_t* swclock_jsonld_init(
     /* Open log file (append mode for JSONL) */
     logger->fp = fopen(log_path, "a");
     if (!logger->fp) {
-        fprintf(stderr, "swclock_jsonld_init: Failed to open %s: %s\n",
-                log_path, strerror(errno));
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld_init: Failed to open %s: %s",
+                     log_path, strerror(errno));
         pthread_mutex_destroy(&logger->lock);
         free(logger->buffer);
         free(logger);
@@ -752,7 +780,7 @@ static int flush_buffer(swclock_jsonld_logger_t* logger)
 
     size_t written = fwrite(logger->buffer, 1, logger->buffer_pos, logger->fp);
     if (written != logger->buffer_pos) {
-        fprintf(stderr, "swclock_jsonld: Failed to write buffer: %s\n", strerror(errno));
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld: Failed to write buffer: %s", strerror(errno));
         return -1;
     }
 
@@ -828,7 +856,7 @@ static int perform_rotation(swclock_jsonld_logger_t* logger)
     char rotated_path[600];
     snprintf(rotated_path, sizeof(rotated_path), "%s.1", logger->log_path);
     if (rename(logger->log_path, rotated_path) != 0) {
-        fprintf(stderr, "swclock_jsonld: Failed to rotate log file: %s\n", strerror(errno));
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld: Failed to rotate log file: %s", strerror(errno));
         /* Try to continue by opening new file anyway */
     }
 
@@ -840,7 +868,7 @@ static int perform_rotation(swclock_jsonld_logger_t* logger)
     /* Open new log file */
     logger->fp = fopen(logger->log_path, "a");
     if (!logger->fp) {
-        fprintf(stderr, "swclock_jsonld: Failed to open new log file: %s\n", strerror(errno));
+        SWCLOCK_JSONLD_ERROR("swclock_jsonld: Failed to open new log file: %s", strerror(errno));
         return -1;
     }
 

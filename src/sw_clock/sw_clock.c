@@ -12,20 +12,46 @@
 #include <math.h>
 #include <inttypes.h> // for PRId64
 #include <sys/time.h>
+#include <stdarg.h>
+#include <syslog.h>
 
 #include "sw_clock.h"
 #include "swclock_jsonld.h"
 #include "sw_clock_commercial_log.h"
 
+static void swclock_emit_log(int priority, const char *format, ...) {
+    char message[1024];
+    va_list ap;
+    FILE *sink = NULL;
+
+    (void)priority;
+
+    va_start(ap, format);
+    vsnprintf(message, sizeof(message), format, ap);
+    va_end(ap);
+
+    sink = fopen("logs/swclock_internal.log", "a");
+    if (!sink) {
+        sink = fopen("/tmp/swclock_internal.log", "a");
+    }
+    if (!sink) {
+        return;
+    }
+
+    fprintf(sink, "[swclock] %s\n", message);
+    fclose(sink);
+}
+
+#define SWCLOCK_LOG_ERROR(fmt, ...)                                            \
+    swclock_emit_log(LOG_ERR, fmt, ##__VA_ARGS__)
+#define SWCLOCK_LOG_WARN(fmt, ...)                                             \
+    swclock_emit_log(LOG_WARNING, fmt, ##__VA_ARGS__)
+
 // Debug instrumentation (enable with -DSWCLOCK_DEBUG)
 #ifdef SWCLOCK_DEBUG
 #define DEBUG_LOG(fmt, ...) \
     do { \
-        struct timespec _ts; \
-        clock_gettime(CLOCK_REALTIME, &_ts); \
-        fprintf(stderr, "[%ld.%06ld] SwClock[%p] " fmt "\n", \
-                _ts.tv_sec, _ts.tv_nsec / 1000, (void*)c, ##__VA_ARGS__); \
-        fflush(stderr); \
+        swclock_emit_log(LOG_DEBUG, "SwClock[%p] " fmt, (void*)c, ##__VA_ARGS__); \
     } while(0)
 #else
 #define DEBUG_LOG(fmt, ...) do {} while(0)
@@ -876,7 +902,7 @@ void swclock_start_log(SwClock* c, const char* filename) {
 
     c->log_fp = fopen(filename, "w");
     if (!c->log_fp) {
-        perror("swclock_start_log: fopen");
+        SWCLOCK_LOG_ERROR("swclock_start_log: fopen failed: %s", strerror(errno));
         pthread_rwlock_unlock(&c->lock);
         return;
     }
@@ -928,9 +954,9 @@ void swclock_start_log(SwClock* c, const char* filename) {
         }
         
         if (swclock_start_event_log(c, event_log_path) == 0) {
-            printf("Event logging started: %s\n", event_log_path);
+            DEBUG_LOG("Event logging started: %s", event_log_path);
         } else {
-            fprintf(stderr, "Warning: Failed to start event logging\n");
+            SWCLOCK_LOG_WARN("Failed to start event logging");
         }
     }
 }
@@ -1160,7 +1186,7 @@ static void* swclock_event_logger_thread_main(void* arg) {
         
         // Check for overruns
         if (swclock_ringbuf_clear_overrun(&c->event_ringbuf)) {
-            fprintf(stderr, "swclock: Event ring buffer overrun detected\n");
+            SWCLOCK_LOG_WARN("Event ring buffer overrun detected");
         }
     }
     

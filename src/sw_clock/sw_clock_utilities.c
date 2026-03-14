@@ -17,8 +17,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdarg.h>
+#include <syslog.h>
 
 #include "sw_clock.h"
+
+static void swclock_util_log(int priority, const char *format, ...) {
+    char message[512];
+    va_list ap;
+    FILE *sink = NULL;
+
+    (void)priority;
+
+    va_start(ap, format);
+    vsnprintf(message, sizeof(message), format, ap);
+    va_end(ap);
+
+    sink = fopen("logs/swclock_internal.log", "a");
+    if (!sink) {
+        sink = fopen("/tmp/swclock_internal.log", "a");
+    }
+    if (!sink) {
+        return;
+    }
+
+    fprintf(sink, "[swclock_util] %s\n", message);
+    fclose(sink);
+}
 
 // Force IntelliSense to see our definitions (redundant but fixes IDE warnings)
 #ifndef ADJ_FREQUENCY
@@ -34,7 +59,7 @@
 void print_timespec_as_datetime(const struct timespec *ts)
 {
     if (!ts) {
-        fprintf(stderr, "print_timespec_as_datetime: null pointer\n");
+        swclock_util_log(LOG_ERR, "print_timespec_as_datetime: null pointer");
         return;
     }
 
@@ -48,13 +73,13 @@ void print_timespec_as_datetime(const struct timespec *ts)
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_utc);
 
     // Print with nanoseconds
-    printf("%s.%09ld UTC\n", buf, ts->tv_nsec);
+    swclock_util_log(LOG_INFO, "%s.%09ld UTC", buf, ts->tv_nsec);
 }
 
 void print_timespec_as_localtime(const struct timespec *ts)
 {
     if (!ts) {
-        fprintf(stderr, "print_timespec_as_localtime: null pointer\n");
+        swclock_util_log(LOG_ERR, "print_timespec_as_localtime: null pointer");
         return;
     }
 
@@ -92,7 +117,7 @@ void print_timespec_as_localtime(const struct timespec *ts)
 #else
     strftime(tz_abbr, sizeof(tz_abbr), "%Z", &tm_local);
 #endif
-    printf("%s.%09ld %s\n", buf, nsec, tz_abbr);
+    swclock_util_log(LOG_INFO, "%s.%09ld %s", buf, nsec, tz_abbr);
 }
 
 /* Future of leap seconds
@@ -106,7 +131,7 @@ void print_timespec_as_localtime(const struct timespec *ts)
 void print_timespec_as_TAI(const struct timespec *ts)
 {
     if (!ts) {
-        fprintf(stderr, "print_timespec_as_TAI: null pointer\n");
+        swclock_util_log(LOG_ERR, "print_timespec_as_TAI: null pointer");
         return;
     }
 
@@ -138,5 +163,5 @@ void print_timespec_as_TAI(const struct timespec *ts)
     if (strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_tai) == 0)
         return;
 
-    printf("%s.%09ld TAI (+%ds)\n", buf, nsec, TAI_OFFSET_2025);
+    swclock_util_log(LOG_INFO, "%s.%09ld TAI (+%ds)", buf, nsec, TAI_OFFSET_2025);
 }

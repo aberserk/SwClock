@@ -19,9 +19,41 @@
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <stdarg.h>
+#include <syslog.h>
 #include <CommonCrypto/CommonDigest.h>  // macOS SHA-256
 
 #define UUID_LENGTH 37
+
+static void swclock_emit_log(int priority, const char *format, ...) {
+    char message[1024];
+    va_list ap;
+    FILE *sink = NULL;
+
+    (void)priority;
+
+    va_start(ap, format);
+    vsnprintf(message, sizeof(message), format, ap);
+    va_end(ap);
+
+    sink = fopen("logs/swclock_internal.log", "a");
+    if (!sink) {
+        sink = fopen("/tmp/swclock_internal.log", "a");
+    }
+    if (!sink) {
+        return;
+    }
+
+    fprintf(sink, "[swclock] %s\n", message);
+    fclose(sink);
+}
+
+#define SWCLOCK_LOG_INFO(fmt, ...)                                             \
+    swclock_emit_log(LOG_INFO, fmt, ##__VA_ARGS__)
+#define SWCLOCK_LOG_WARN(fmt, ...)                                             \
+    swclock_emit_log(LOG_WARNING, fmt, ##__VA_ARGS__)
+#define SWCLOCK_LOG_ERROR(fmt, ...)                                            \
+    swclock_emit_log(LOG_ERR, fmt, ##__VA_ARGS__)
 
 // Global commercial logging state
 static swclock_commercial_config_t g_commercial_config;
@@ -118,7 +150,7 @@ swclock_commercial_config_t swclock_commercial_get_defaults(void) {
 
 int swclock_commercial_logging_init(const swclock_commercial_config_t* config) {
     if (g_commercial_logging_initialized) {
-        fprintf(stderr, "Commercial logging already initialized\n");
+        SWCLOCK_LOG_WARN("Commercial logging already initialized");
         return -1;
     }
     
@@ -144,20 +176,20 @@ int swclock_commercial_logging_init(const swclock_commercial_config_t* config) {
     struct stat st = {0};
     if (stat(log_dir, &st) == -1) {
         if (mkdir(log_dir, 0755) != 0) {
-            perror("Failed to create log directory");
+            SWCLOCK_LOG_ERROR("Failed to create log directory: %s", strerror(errno));
             return -1;
         }
     }
     
     g_commercial_logging_initialized = true;
     
-    printf("Commercial logging initialized:\n");
-    printf("  Run ID: %s\n", g_run_uuid);
-    printf("  Log Directory: %s/\n", log_dir);
-    printf("  Binary Events: %s\n", g_commercial_config.binary_event_log ? "ON" : "OFF");
-    printf("  JSON-LD: %s\n", g_commercial_config.jsonld_structured_log ? "ON" : "OFF");
-    printf("  Servo State: %s\n", g_commercial_config.servo_state_log ? "ON" : "OFF");
-    printf("  Integrity Protection: %s\n", g_commercial_config.automatic_integrity ? "ON" : "OFF");
+    SWCLOCK_LOG_INFO("Commercial logging initialized");
+    SWCLOCK_LOG_INFO("Run ID: %s", g_run_uuid);
+    SWCLOCK_LOG_INFO("Log Directory: %s/", log_dir);
+    SWCLOCK_LOG_INFO("Binary Events: %s", g_commercial_config.binary_event_log ? "ON" : "OFF");
+    SWCLOCK_LOG_INFO("JSON-LD: %s", g_commercial_config.jsonld_structured_log ? "ON" : "OFF");
+    SWCLOCK_LOG_INFO("Servo State: %s", g_commercial_config.servo_state_log ? "ON" : "OFF");
+    SWCLOCK_LOG_INFO("Integrity Protection: %s", g_commercial_config.automatic_integrity ? "ON" : "OFF");
     
     return 0;
 }
@@ -167,18 +199,18 @@ int swclock_commercial_logging_finalize(void) {
         return 0;  // Nothing to finalize
     }
     
-    printf("Finalizing commercial logging...\n");
+    SWCLOCK_LOG_INFO("Finalizing commercial logging...");
     
     // Generate manifest
     const char* log_dir = g_commercial_config.log_directory ? 
                           g_commercial_config.log_directory : "logs";
     
     if (swclock_generate_manifest(g_run_uuid, log_dir) != 0) {
-        fprintf(stderr, "Warning: Failed to generate manifest\n");
+        SWCLOCK_LOG_WARN("Failed to generate manifest");
     }
     
     g_commercial_logging_initialized = false;
-    printf("Commercial logging finalized.\n");
+    SWCLOCK_LOG_INFO("Commercial logging finalized.");
     
     return 0;
 }
@@ -255,7 +287,7 @@ int swclock_seal_log_file(const char* filepath) {
     // Read entire file
     FILE* fp = fopen(filepath, "rb");
     if (fp == NULL) {
-        perror("Failed to open file for sealing");
+        SWCLOCK_LOG_ERROR("Failed to open file for sealing: %s", strerror(errno));
         return -1;
     }
     
@@ -292,7 +324,7 @@ int swclock_seal_log_file(const char* filepath) {
     // Append signature block
     fp = fopen(filepath, "a");
     if (fp == NULL) {
-        perror("Failed to open file for signature");
+        SWCLOCK_LOG_ERROR("Failed to open file for signature: %s", strerror(errno));
         return -1;
     }
     
@@ -312,7 +344,7 @@ int swclock_seal_log_file(const char* filepath) {
     
     fclose(fp);
     
-    printf("Log file sealed: %s\n", filepath);
+    SWCLOCK_LOG_INFO("Log file sealed: %s", filepath);
     return 0;
 }
 
@@ -346,7 +378,7 @@ int swclock_verify_log_integrity(const char* filepath, bool* out_valid) {
     
     if (!found_signature) {
         fclose(fp);
-        fprintf(stderr, "No integrity signature found in file\n");
+        SWCLOCK_LOG_WARN("No integrity signature found in file");
         return -1;
     }
     
@@ -395,7 +427,7 @@ int swclock_generate_manifest(const char* run_id, const char* log_directory) {
     
     FILE* fp = fopen(manifest_path, "w");
     if (fp == NULL) {
-        perror("Failed to create manifest");
+        SWCLOCK_LOG_ERROR("Failed to create manifest: %s", strerror(errno));
         return -1;
     }
     
@@ -436,6 +468,6 @@ int swclock_generate_manifest(const char* run_id, const char* log_directory) {
     
     fclose(fp);
     
-    printf("Manifest generated: %s\n", manifest_path);
+    SWCLOCK_LOG_INFO("Manifest generated: %s", manifest_path);
     return 0;
 }

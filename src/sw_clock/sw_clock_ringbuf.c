@@ -6,6 +6,31 @@
 #include "sw_clock_ringbuf.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <syslog.h>
+
+static void swclock_ringbuf_log(int priority, const char *format, ...) {
+    char message[256];
+    va_list ap;
+    FILE *sink = NULL;
+
+    (void)priority;
+
+    va_start(ap, format);
+    vsnprintf(message, sizeof(message), format, ap);
+    va_end(ap);
+
+    sink = fopen("logs/swclock_internal.log", "a");
+    if (!sink) {
+        sink = fopen("/tmp/swclock_internal.log", "a");
+    }
+    if (!sink) {
+        return;
+    }
+
+    fprintf(sink, "[swclock_ringbuf] %s\n", message);
+    fclose(sink);
+}
 
 void swclock_ringbuf_init(swclock_ringbuf_t* rb) {
     if (!rb) return;
@@ -114,8 +139,9 @@ bool swclock_ringbuf_pop(
     // Validate size
     if (size_header == 0 || size_header > max_size) {
         // Corrupted data or buffer too small
-        fprintf(stderr, "swclock_ringbuf: Invalid size %u (max %zu)\n",
-                size_header, max_size);
+        swclock_ringbuf_log(LOG_WARNING,
+                    "Invalid size %u (max %zu)",
+                    size_header, max_size);
         return false;
     }
     
